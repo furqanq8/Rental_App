@@ -15,6 +15,31 @@ const selectRefs = {};
 let tripIdInput;
 let fleetOwnershipSelect;
 let driverAffiliationSelect;
+const editingContext = { type: null, index: -1 };
+const modalTypeMap = {
+  fleetModal: 'fleet',
+  driverModal: 'driver',
+  tripModal: 'trip',
+  invoiceModal: 'invoice',
+  supplierModal: 'supplierPayment',
+  supplierDirectoryModal: 'supplierDirectory'
+};
+const modalEditTitles = {
+  fleetModal: 'Edit Fleet Unit',
+  driverModal: 'Edit Driver',
+  tripModal: 'Edit Trip',
+  invoiceModal: 'Edit Invoice',
+  supplierModal: 'Edit Supplier Payment',
+  supplierDirectoryModal: 'Edit Supplier'
+};
+const modalEditSubmitLabels = {
+  fleetModal: 'Update Unit',
+  driverModal: 'Update Driver',
+  tripModal: 'Update Trip',
+  invoiceModal: 'Update Invoice',
+  supplierModal: 'Update Payment',
+  supplierDirectoryModal: 'Update Supplier'
+};
 
 function loadState() {
   try {
@@ -95,9 +120,71 @@ const dom = {
   supplierDirectoryTable: document.querySelector('#supplierDirectoryTable tbody'),
 };
 
+function initializeModalDefaults() {
+  document.querySelectorAll('.modal').forEach(modal => {
+    const title = modal.querySelector('header h3');
+    const submit = modal.querySelector('button[type="submit"]');
+    if (title && !modal.dataset.defaultTitle) {
+      modal.dataset.defaultTitle = title.textContent;
+    }
+    if (submit && !submit.dataset.defaultLabel) {
+      submit.dataset.defaultLabel = submit.textContent;
+    }
+    setModalMode(modal.id, 'create');
+  });
+}
+
+function setModalMode(modalId, mode = 'create') {
+  const modal = document.getElementById(modalId);
+  if (!modal) return;
+  const title = modal.querySelector('header h3');
+  const submit = modal.querySelector('button[type="submit"]');
+  if (mode === 'edit') {
+    modal.dataset.mode = 'edit';
+    if (title) {
+      title.textContent = modalEditTitles[modalId] || modal.dataset.defaultTitle || title.textContent;
+    }
+    if (submit) {
+      submit.textContent = modalEditSubmitLabels[modalId] || submit.dataset.defaultLabel || submit.textContent;
+    }
+  } else {
+    modal.dataset.mode = 'create';
+    if (title && modal.dataset.defaultTitle) {
+      title.textContent = modal.dataset.defaultTitle;
+    }
+    if (submit && submit.dataset.defaultLabel) {
+      submit.textContent = submit.dataset.defaultLabel;
+    }
+  }
+}
+
+function isModalInEditMode(modalId) {
+  const modal = document.getElementById(modalId);
+  return modal ? modal.dataset.mode === 'edit' : false;
+}
+
+function startEditing(type, index) {
+  editingContext.type = type;
+  editingContext.index = index;
+}
+
+function clearEditingContext() {
+  editingContext.type = null;
+  editingContext.index = -1;
+}
+
+function getModalType(modalId) {
+  return modalTypeMap[modalId] || null;
+}
+
+function isEditing(type) {
+  return editingContext.type === type && editingContext.index > -1;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   dom.year.textContent = new Date().getFullYear();
 
+  initializeModalDefaults();
   setupModals();
   setupForms();
   setupFilters();
@@ -109,12 +196,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function setupModals() {
   dom.cards.forEach(card => {
-    card.addEventListener('click', () => openModal(card.dataset.modal));
+    const modalId = card.dataset.modal;
+    card.addEventListener('click', () => {
+      if (!modalId) return;
+      clearEditingContext();
+      setModalMode(modalId, 'create');
+      openModal(modalId);
+    });
     const button = card.querySelector('button');
     if (button) {
       button.addEventListener('click', evt => {
         evt.stopPropagation();
-        openModal(card.dataset.modal);
+        if (!modalId) return;
+        clearEditingContext();
+        setModalMode(modalId, 'create');
+        openModal(modalId);
       });
     }
   });
@@ -152,11 +248,17 @@ function closeModal(id) {
     if (id === 'driverModal' && selectRefs.driverSupplier && driverAffiliationSelect) {
       toggleDependentSelect(selectRefs.driverSupplier, driverAffiliationSelect.value === 'supplier');
     }
+    const type = getModalType(id);
+    if (type && editingContext.type === type) {
+      clearEditingContext();
+    }
+    setModalMode(id, 'create');
   }
 }
 
 function prepareModal(id) {
-  if (id === 'tripModal' && tripIdInput) {
+  const editing = isModalInEditMode(id);
+  if (id === 'tripModal' && tripIdInput && !editing) {
     tripIdInput.value = formatTripId(state.nextTripNumber);
   }
   if (id === 'tripModal' || id === 'invoiceModal' || id === 'supplierModal' || id === 'fleetModal' || id === 'driverModal') {
@@ -308,7 +410,11 @@ function setupForms() {
         status: formData.get('status'),
         supplier: ownership === 'rent-in' ? formData.get('supplier') : ''
       };
-      state.fleet.unshift(entry);
+      if (isEditing('fleet')) {
+        state.fleet.splice(editingContext.index, 1, entry);
+      } else {
+        state.fleet.unshift(entry);
+      }
       persistState();
       renderFleet();
       updateAllSelectOptions();
@@ -338,7 +444,11 @@ function setupForms() {
         affiliation,
         supplier: supplierName
       };
-      state.drivers.unshift(entry);
+      if (isEditing('driver')) {
+        state.drivers.splice(editingContext.index, 1, entry);
+      } else {
+        state.drivers.unshift(entry);
+      }
       persistState();
       renderDrivers();
       updateAllSelectOptions();
@@ -366,8 +476,14 @@ function setupForms() {
       const formData = new FormData(tripForm);
       const customer = formData.get('customer');
       const rentalCharges = Number(formData.get('rentalCharges'));
-      const tripId = formatTripId(state.nextTripNumber);
-      state.nextTripNumber += 1;
+      const editingTrip = isEditing('trip');
+      let tripId = formData.get('tripId');
+      if (!editingTrip) {
+        tripId = formatTripId(state.nextTripNumber);
+        state.nextTripNumber += 1;
+      } else if (!tripId && state.trips[editingContext.index]) {
+        tripId = state.trips[editingContext.index].tripId;
+      }
       const entry = {
         tripId,
         date: formData.get('date'),
@@ -379,7 +495,11 @@ function setupForms() {
         status: formData.get('status')
       };
       ensureCustomer(customer);
-      state.trips.unshift(entry);
+      if (editingTrip) {
+        state.trips.splice(editingContext.index, 1, entry);
+      } else {
+        state.trips.unshift(entry);
+      }
       persistState();
       renderTrips();
       updateAllSelectOptions();
@@ -407,7 +527,11 @@ function setupForms() {
         notes: formData.get('notes')
       };
       ensureCustomer(customer);
-      state.invoices.unshift(entry);
+      if (isEditing('invoice')) {
+        state.invoices.splice(editingContext.index, 1, entry);
+      } else {
+        state.invoices.unshift(entry);
+      }
       persistState();
       renderInvoices();
       updateAllSelectOptions();
@@ -430,7 +554,11 @@ function setupForms() {
         status: formData.get('status'),
         notes: formData.get('notes')
       };
-      state.suppliers.unshift(entry);
+      if (isEditing('supplierPayment')) {
+        state.suppliers.splice(editingContext.index, 1, entry);
+      } else {
+        state.suppliers.unshift(entry);
+      }
       persistState();
       renderSuppliers();
       updateAllSelectOptions();
@@ -448,7 +576,11 @@ function setupForms() {
         phone: formData.get('phone'),
         email: formData.get('email')
       };
-      state.supplierDirectory.unshift(entry);
+      if (isEditing('supplierDirectory')) {
+        state.supplierDirectory.splice(editingContext.index, 1, entry);
+      } else {
+        state.supplierDirectory.unshift(entry);
+      }
       persistState();
       renderSupplierDirectory();
       updateAllSelectOptions();
@@ -478,6 +610,7 @@ function renderFleet() {
   dom.fleetTable.innerHTML = rows
     .map(item => {
       const statusClass = statusClassName(item.status);
+      const index = state.fleet.indexOf(item);
       return `<tr>
         <td data-label="Unit ID">${escapeHtml(item.unitId)}</td>
         <td data-label="Fleet Type">${escapeHtml(item.fleetType || '')}</td>
@@ -486,9 +619,19 @@ function renderFleet() {
         <td data-label="Capacity">${escapeHtml(item.capacity || '')}</td>
         <td data-label="Status"><span class="status-pill ${statusClass}">${escapeHtml(item.status)}</span></td>
         <td data-label="Supplier">${escapeHtml(item.supplier || '-')}</td>
+        <td data-label="Actions"><div class="table-actions"><button class="btn secondary" data-edit="fleet" data-index="${index}">Edit</button></div></td>
       </tr>`;
     })
     .join('');
+
+  dom.fleetTable.querySelectorAll('[data-edit="fleet"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      if (!Number.isNaN(index)) {
+        openFleetEditor(index);
+      }
+    });
+  });
 }
 
 function renderDrivers() {
@@ -497,32 +640,58 @@ function renderDrivers() {
       const affiliationLabel = item.affiliation === 'supplier'
         ? `Supplier${item.supplier ? ` (${item.supplier})` : ''}`
         : 'Company';
+      const index = state.drivers.indexOf(item);
       return `<tr>
         <td data-label="Name">${escapeHtml(item.name)}</td>
         <td data-label="License No.">${escapeHtml(item.license)}</td>
         <td data-label="Phone"><a href="tel:${escapeHtml(item.phone)}">${escapeHtml(item.phone)}</a></td>
         <td data-label="Availability"><span class="status-pill ${statusClassName(item.availability)}">${escapeHtml(item.availability)}</span></td>
         <td data-label="Affiliation">${escapeHtml(affiliationLabel)}</td>
+        <td data-label="Actions"><div class="table-actions"><button class="btn secondary" data-edit="driver" data-index="${index}">Edit</button></div></td>
       </tr>`;
     })
     .join('');
+
+  dom.driverTable.querySelectorAll('[data-edit="driver"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      if (!Number.isNaN(index)) {
+        openDriverEditor(index);
+      }
+    });
+  });
 }
 
 function renderSupplierDirectory() {
   if (!dom.supplierDirectoryTable) return;
   dom.supplierDirectoryTable.innerHTML = (state.supplierDirectory || [])
-    .map(item => `<tr>
+    .map(item => {
+      const index = state.supplierDirectory.indexOf(item);
+      return `<tr>
       <td data-label="Name">${escapeHtml(item.name)}</td>
       <td data-label="Contact">${escapeHtml(item.contact || '')}</td>
       <td data-label="Phone">${escapeHtml(item.phone || '')}</td>
       <td data-label="Email">${escapeHtml(item.email || '')}</td>
-    </tr>`)
+      <td data-label="Actions"><div class="table-actions"><button class="btn secondary" data-edit="supplierDirectory" data-index="${index}">Edit</button></div></td>
+    </tr>`;
+    })
     .join('');
+
+  dom.supplierDirectoryTable.querySelectorAll('[data-edit="supplierDirectory"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      if (!Number.isNaN(index)) {
+        openSupplierDirectoryEditor(index);
+      }
+    });
+  });
 }
 
 function renderTrips() {
   dom.tripTable.innerHTML = state.trips
-    .map(item => `<tr>
+    .map(item => {
+      const index = state.trips.indexOf(item);
+      return `<tr>
       <td data-label="Trip ID">${escapeHtml(item.tripId)}</td>
       <td data-label="Date">${formatDate(item.date)}</td>
       <td data-label="Customer">${escapeHtml(item.customer)}</td>
@@ -531,24 +700,47 @@ function renderTrips() {
       <td data-label="Route">${escapeHtml(item.route || '')}</td>
       <td data-label="Rental Charges">${formatCurrency(typeof item.rentalCharges === 'number' ? item.rentalCharges : Number(item.rentalCharges))}</td>
       <td data-label="Status"><span class="status-pill ${statusClassName(item.status)}">${escapeHtml(item.status)}</span></td>
-    </tr>`)
+      <td data-label="Actions"><div class="table-actions"><button class="btn secondary" data-edit="trip" data-index="${index}">Edit</button></div></td>
+    </tr>`;
+    })
     .join('');
+
+  dom.tripTable.querySelectorAll('[data-edit="trip"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      if (!Number.isNaN(index)) {
+        openTripEditor(index);
+      }
+    });
+  });
 }
 
 function renderInvoices() {
   const filter = dom.invoiceFilter.value;
   const rows = state.invoices.filter(item => filter === 'all' || item.status === filter);
   dom.invoiceTable.innerHTML = rows
-    .map(item => `<tr>
+    .map(item => {
+      const index = state.invoices.indexOf(item);
+      return `<tr>
       <td data-label="Invoice #">${escapeHtml(item.invoice)}</td>
       <td data-label="Customer">${escapeHtml(item.customer)}</td>
       <td data-label="Trip">${escapeHtml(item.trip || '-')}</td>
       <td data-label="Amount">${formatCurrency(item.amount)}</td>
       <td data-label="Due Date">${formatDate(item.dueDate)}</td>
       <td data-label="Status"><span class="status-pill ${statusClassName(item.status)}">${escapeHtml(item.status)}</span></td>
-      <td data-label="Actions"><button class="btn secondary" data-print="${encodeURIComponent(item.invoice)}">Print PDF</button></td>
-    </tr>`)
+      <td data-label="Actions"><div class="table-actions"><button class="btn secondary" data-edit="invoice" data-index="${index}">Edit</button><button class="btn secondary" data-print="${encodeURIComponent(item.invoice)}">Print PDF</button></div></td>
+    </tr>`;
+    })
     .join('');
+
+  dom.invoiceTable.querySelectorAll('[data-edit="invoice"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      if (!Number.isNaN(index)) {
+        openInvoiceEditor(index);
+      }
+    });
+  });
 
   dom.invoiceTable.querySelectorAll('[data-print]').forEach(button => {
     button.addEventListener('click', () => {
@@ -564,17 +756,200 @@ function renderSuppliers() {
   const filter = dom.supplierFilter.value;
   const rows = state.suppliers.filter(item => filter === 'all' || item.status === filter);
   dom.supplierTable.innerHTML = rows
-    .map(item => `<tr>
+    .map(item => {
+      const index = state.suppliers.indexOf(item);
+      return `<tr>
       <td data-label="Reference">${escapeHtml(item.reference)}</td>
       <td data-label="Supplier">${escapeHtml(item.supplier)}</td>
       <td data-label="Vehicle">${escapeHtml(item.vehicle || '-')}</td>
       <td data-label="Amount">${formatCurrency(item.amount)}</td>
       <td data-label="Due Date">${formatDate(item.dueDate)}</td>
       <td data-label="Status"><span class="status-pill ${statusClassName(item.status)}">${escapeHtml(item.status)}</span></td>
-    </tr>`)
+      <td data-label="Actions"><div class="table-actions"><button class="btn secondary" data-edit="supplierPayment" data-index="${index}">Edit</button></div></td>
+    </tr>`;
+    })
     .join('');
 
+  dom.supplierTable.querySelectorAll('[data-edit="supplierPayment"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      if (!Number.isNaN(index)) {
+        openSupplierPaymentEditor(index);
+      }
+    });
+  });
+
   dom.supplierReport.innerHTML = buildSupplierReport();
+}
+
+function openFleetEditor(index) {
+  if (!state.fleet[index]) return;
+  startEditing('fleet', index);
+  setModalMode('fleetModal', 'edit');
+  populateFleetForm(index);
+  openModal('fleetModal');
+}
+
+function openDriverEditor(index) {
+  if (!state.drivers[index]) return;
+  startEditing('driver', index);
+  setModalMode('driverModal', 'edit');
+  populateDriverForm(index);
+  openModal('driverModal');
+}
+
+function openTripEditor(index) {
+  if (!state.trips[index]) return;
+  startEditing('trip', index);
+  setModalMode('tripModal', 'edit');
+  populateTripForm(index);
+  openModal('tripModal');
+}
+
+function openInvoiceEditor(index) {
+  if (!state.invoices[index]) return;
+  startEditing('invoice', index);
+  setModalMode('invoiceModal', 'edit');
+  populateInvoiceForm(index);
+  openModal('invoiceModal');
+}
+
+function openSupplierPaymentEditor(index) {
+  if (!state.suppliers[index]) return;
+  startEditing('supplierPayment', index);
+  setModalMode('supplierModal', 'edit');
+  populateSupplierPaymentForm(index);
+  openModal('supplierModal');
+}
+
+function openSupplierDirectoryEditor(index) {
+  if (!state.supplierDirectory[index]) return;
+  startEditing('supplierDirectory', index);
+  setModalMode('supplierDirectoryModal', 'edit');
+  populateSupplierDirectoryForm(index);
+  openModal('supplierDirectoryModal');
+}
+
+function setFormValue(form, selector, value) {
+  if (!form) return;
+  const field = form.querySelector(selector);
+  if (field) {
+    field.value = value ?? '';
+  }
+}
+
+function setSelectValue(select, value) {
+  if (!select) return;
+  const sanitized = value ?? '';
+  select.dataset.pendingValue = sanitized;
+  select.value = sanitized;
+}
+
+function populateFleetForm(index) {
+  const entry = state.fleet[index];
+  const modal = document.getElementById('fleetModal');
+  if (!entry || !modal) return;
+  const form = modal.querySelector('form');
+  setFormValue(form, 'input[name="unitId"]', entry.unitId);
+  setFormValue(form, 'select[name="fleetType"]', entry.fleetType);
+  if (fleetOwnershipSelect) {
+    fleetOwnershipSelect.value = entry.ownership || 'owned';
+  }
+  setFormValue(form, 'input[name="model"]', entry.model);
+  setFormValue(form, 'input[name="capacity"]', entry.capacity);
+  setFormValue(form, 'select[name="status"]', entry.status);
+  if (selectRefs.fleetSupplier) {
+    const supplierValue = entry.ownership === 'rent-in' ? entry.supplier : '';
+    setSelectValue(selectRefs.fleetSupplier, supplierValue);
+    toggleDependentSelect(selectRefs.fleetSupplier, entry.ownership === 'rent-in');
+  }
+}
+
+function populateDriverForm(index) {
+  const entry = state.drivers[index];
+  const modal = document.getElementById('driverModal');
+  if (!entry || !modal) return;
+  const form = modal.querySelector('form');
+  setFormValue(form, 'input[name="name"]', entry.name);
+  setFormValue(form, 'input[name="license"]', entry.license);
+  setFormValue(form, 'input[name="phone"]', entry.phone);
+  setFormValue(form, 'select[name="availability"]', entry.availability);
+  if (driverAffiliationSelect) {
+    driverAffiliationSelect.value = entry.affiliation || 'company';
+  }
+  if (selectRefs.driverSupplier) {
+    setSelectValue(selectRefs.driverSupplier, entry.supplier);
+    toggleDependentSelect(selectRefs.driverSupplier, entry.affiliation === 'supplier');
+  }
+}
+
+function populateTripForm(index) {
+  const entry = state.trips[index];
+  const modal = document.getElementById('tripModal');
+  if (!entry || !modal) return;
+  const form = modal.querySelector('form');
+  setFormValue(form, 'input[name="tripId"]', entry.tripId);
+  setFormValue(form, 'input[name="date"]', entry.date);
+  if (selectRefs.tripCustomer) {
+    setSelectValue(selectRefs.tripCustomer, entry.customer);
+  }
+  if (selectRefs.tripVehicle) {
+    setSelectValue(selectRefs.tripVehicle, entry.vehicle);
+  }
+  if (selectRefs.tripDriver) {
+    setSelectValue(selectRefs.tripDriver, entry.driver);
+  }
+  setFormValue(form, 'input[name="route"]', entry.route);
+  const rentalValue = typeof entry.rentalCharges === 'number' ? entry.rentalCharges : Number(entry.rentalCharges) || entry.rentalCharges;
+  setFormValue(form, 'input[name="rentalCharges"]', rentalValue);
+  setFormValue(form, 'select[name="status"]', entry.status);
+}
+
+function populateInvoiceForm(index) {
+  const entry = state.invoices[index];
+  const modal = document.getElementById('invoiceModal');
+  if (!entry || !modal) return;
+  const form = modal.querySelector('form');
+  setFormValue(form, 'input[name="invoice"]', entry.invoice);
+  if (selectRefs.invoiceCustomer) {
+    setSelectValue(selectRefs.invoiceCustomer, entry.customer);
+  }
+  if (selectRefs.invoiceTrip) {
+    setSelectValue(selectRefs.invoiceTrip, entry.trip);
+  }
+  setFormValue(form, 'input[name="amount"]', typeof entry.amount === 'number' ? entry.amount : Number(entry.amount) || entry.amount);
+  setFormValue(form, 'input[name="dueDate"]', entry.dueDate);
+  setFormValue(form, 'select[name="status"]', entry.status);
+  setFormValue(form, 'textarea[name="notes"]', entry.notes);
+}
+
+function populateSupplierPaymentForm(index) {
+  const entry = state.suppliers[index];
+  const modal = document.getElementById('supplierModal');
+  if (!entry || !modal) return;
+  const form = modal.querySelector('form');
+  setFormValue(form, 'input[name="reference"]', entry.reference);
+  if (selectRefs.supplierPaymentSupplier) {
+    setSelectValue(selectRefs.supplierPaymentSupplier, entry.supplier);
+  }
+  if (selectRefs.supplierPaymentVehicle) {
+    setSelectValue(selectRefs.supplierPaymentVehicle, entry.vehicle);
+  }
+  setFormValue(form, 'input[name="amount"]', typeof entry.amount === 'number' ? entry.amount : Number(entry.amount) || entry.amount);
+  setFormValue(form, 'input[name="dueDate"]', entry.dueDate);
+  setFormValue(form, 'select[name="status"]', entry.status);
+  setFormValue(form, 'textarea[name="notes"]', entry.notes);
+}
+
+function populateSupplierDirectoryForm(index) {
+  const entry = state.supplierDirectory[index];
+  const modal = document.getElementById('supplierDirectoryModal');
+  if (!entry || !modal) return;
+  const form = modal.querySelector('form');
+  setFormValue(form, 'input[name="name"]', entry.name);
+  setFormValue(form, 'input[name="contact"]', entry.contact);
+  setFormValue(form, 'input[name="phone"]', entry.phone);
+  setFormValue(form, 'input[name="email"]', entry.email);
 }
 
 function buildInvoiceReport() {
