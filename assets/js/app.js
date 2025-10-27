@@ -1,25 +1,72 @@
-const storageKey = 'azmat-fleet-state-v1';
+const storageKey = 'azmat-fleet-state-v2';
 const defaultState = {
   fleet: [],
   drivers: [],
   trips: [],
   invoices: [],
-  suppliers: []
+  suppliers: [],
+  supplierDirectory: [],
+  customers: [],
+  nextTripNumber: 1
 };
 
 const state = loadState();
+const selectRefs = {};
+let tripIdInput;
+let fleetOwnershipSelect;
+let driverAffiliationSelect;
 
 function loadState() {
   try {
     const saved = localStorage.getItem(storageKey);
     if (saved) {
       const parsed = JSON.parse(saved);
-      return { ...defaultState, ...parsed };
+      return normalizeState(parsed);
     }
   } catch (error) {
     console.warn('Unable to load saved data. Starting fresh.', error);
   }
   return JSON.parse(JSON.stringify(defaultState));
+}
+
+function normalizeState(parsed) {
+  const base = JSON.parse(JSON.stringify(defaultState));
+  if (parsed && typeof parsed === 'object') {
+    Object.assign(base, parsed);
+  }
+  if (!Array.isArray(base.supplierDirectory)) {
+    base.supplierDirectory = [];
+  }
+  if (!Array.isArray(base.customers)) {
+    base.customers = [];
+  }
+  base.customers = Array.from(new Set(base.customers.filter(Boolean)));
+  if (typeof base.nextTripNumber !== 'number' || base.nextTripNumber < 1) {
+    base.nextTripNumber = 1;
+  }
+  return hydrateDerivedCollections(base);
+}
+
+function hydrateDerivedCollections(currentState) {
+  const customers = new Set(currentState.customers || []);
+  (currentState.trips || []).forEach(trip => {
+    if (trip && trip.customer) customers.add(trip.customer);
+  });
+  (currentState.invoices || []).forEach(invoice => {
+    if (invoice && invoice.customer) customers.add(invoice.customer);
+  });
+  currentState.customers = Array.from(customers).sort((a, b) => a.localeCompare(b));
+  const highestTripNumber = (currentState.trips || [])
+    .map(trip => {
+      const match = String(trip.tripId || '').match(/(\d+)/);
+      return match ? Number(match[1]) : NaN;
+    })
+    .filter(num => Number.isFinite(num))
+    .reduce((max, num) => Math.max(max, num), 0);
+  if (highestTripNumber >= currentState.nextTripNumber) {
+    currentState.nextTripNumber = highestTripNumber + 1;
+  }
+  return currentState;
 }
 
 function persistState() {
@@ -45,6 +92,7 @@ const dom = {
   supplierTable: document.querySelector('#supplierTable tbody'),
   supplierFilter: document.getElementById('supplierFilter'),
   supplierReport: document.getElementById('supplierReport'),
+  supplierDirectoryTable: document.querySelector('#supplierDirectoryTable tbody'),
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -56,6 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
   dom.exportBtn.addEventListener('click', exportWorkbook);
 
   renderAll();
+  updateAllSelectOptions();
 });
 
 function setupModals() {
@@ -82,6 +131,7 @@ function setupModals() {
 function openModal(id) {
   const modal = document.getElementById(id);
   if (modal) {
+    prepareModal(id);
     modal.setAttribute('aria-hidden', 'false');
     const focusable = modal.querySelector('input, select, textarea');
     if (focusable) {
@@ -96,95 +146,315 @@ function closeModal(id) {
     modal.setAttribute('aria-hidden', 'true');
     const form = modal.querySelector('form');
     if (form) form.reset();
+    if (id === 'fleetModal' && selectRefs.fleetSupplier && fleetOwnershipSelect) {
+      toggleDependentSelect(selectRefs.fleetSupplier, fleetOwnershipSelect.value === 'rent-in');
+    }
+    if (id === 'driverModal' && selectRefs.driverSupplier && driverAffiliationSelect) {
+      toggleDependentSelect(selectRefs.driverSupplier, driverAffiliationSelect.value === 'supplier');
+    }
   }
 }
 
+function prepareModal(id) {
+  if (id === 'tripModal' && tripIdInput) {
+    tripIdInput.value = formatTripId(state.nextTripNumber);
+  }
+  if (id === 'tripModal' || id === 'invoiceModal' || id === 'supplierModal' || id === 'fleetModal' || id === 'driverModal') {
+    updateAllSelectOptions();
+  }
+  if (id === 'fleetModal' && selectRefs.fleetSupplier && fleetOwnershipSelect) {
+    toggleDependentSelect(selectRefs.fleetSupplier, fleetOwnershipSelect.value === 'rent-in');
+  }
+  if (id === 'driverModal' && selectRefs.driverSupplier && driverAffiliationSelect) {
+    toggleDependentSelect(selectRefs.driverSupplier, driverAffiliationSelect.value === 'supplier');
+  }
+}
+
+function toggleDependentSelect(select, enabled) {
+  if (!select) return;
+  select.disabled = !enabled;
+  select.required = !!enabled;
+  if (!enabled) {
+    select.value = '';
+  }
+}
+
+function handleAllowNewSelection(select) {
+  if (!select || select.value !== '__new__') return;
+  const label = select.getAttribute('data-label') || select.name || 'entry';
+  const response = window.prompt(`Enter new ${label} name`);
+  if (response && response.trim()) {
+    const value = response.trim();
+    ensureCustomer(value);
+    select.dataset.pendingValue = value;
+    persistState();
+    updateAllSelectOptions();
+    select.value = value;
+  } else {
+    select.value = '';
+  }
+}
+
+function updateAllSelectOptions() {
+  const supplierNames = getSupplierNames();
+  setSelectOptions(selectRefs.fleetSupplier, supplierNames, 'Select supplier');
+  setSelectOptions(selectRefs.driverSupplier, supplierNames, 'Select supplier');
+  setSelectOptions(selectRefs.supplierPaymentSupplier, supplierNames, 'Select supplier');
+
+  const vehicleIds = state.fleet.map(item => item.unitId).filter(Boolean);
+  setSelectOptions(selectRefs.tripVehicle, vehicleIds, 'Select vehicle');
+  const rentInVehicles = state.fleet.filter(item => item.ownership === 'rent-in').map(item => item.unitId).filter(Boolean);
+  setSelectOptions(selectRefs.supplierPaymentVehicle, rentInVehicles, 'Select vehicle');
+
+  const driverNames = state.drivers.map(item => item.name).filter(Boolean);
+  setSelectOptions(selectRefs.tripDriver, driverNames, 'Select driver');
+
+  const customers = [...state.customers].sort((a, b) => a.localeCompare(b));
+  setSelectOptions(selectRefs.tripCustomer, customers, 'Select customer', { allowNew: true });
+  setSelectOptions(selectRefs.invoiceCustomer, customers, 'Select customer', { allowNew: true });
+
+  const tripReferences = state.trips.map(item => item.tripId).filter(Boolean);
+  setSelectOptions(selectRefs.invoiceTrip, tripReferences, 'Select trip');
+}
+
+function setSelectOptions(select, values, placeholder, options = {}) {
+  if (!select) return;
+  const { allowNew = false } = options;
+  const previousValue = select.dataset.pendingValue || select.value;
+  select.innerHTML = '';
+
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.textContent = placeholder;
+  select.appendChild(placeholderOption);
+
+  const uniqueValues = Array.from(new Set(values || [])).filter(Boolean);
+  uniqueValues.forEach(value => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+
+  if (allowNew) {
+    const addNew = document.createElement('option');
+    addNew.value = '__new__';
+    addNew.textContent = '+ Add new';
+    select.appendChild(addNew);
+  }
+
+  if (previousValue && Array.from(select.options).some(option => option.value === previousValue)) {
+    select.value = previousValue;
+  } else {
+    select.value = '';
+  }
+
+  delete select.dataset.pendingValue;
+}
+
+function getSupplierNames() {
+  const names = new Set();
+  (state.supplierDirectory || []).forEach(supplier => {
+    if (supplier && supplier.name) names.add(supplier.name);
+  });
+  (state.fleet || []).forEach(item => {
+    if (item && item.supplier) names.add(item.supplier);
+  });
+  (state.drivers || []).forEach(driver => {
+    if (driver && driver.supplier) names.add(driver.supplier);
+  });
+  (state.suppliers || []).forEach(payment => {
+    if (payment && payment.supplier) names.add(payment.supplier);
+  });
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
+function ensureCustomer(customerName) {
+  if (!customerName) return;
+  const trimmed = String(customerName).trim();
+  if (!trimmed) return;
+  if (!state.customers.includes(trimmed)) {
+    state.customers.push(trimmed);
+    state.customers.sort((a, b) => a.localeCompare(b));
+  }
+}
+
+function formatTripId(sequenceNumber) {
+  const number = Number(sequenceNumber) || 0;
+  return `TRIP-${String(Math.max(number, 1)).padStart(4, '0')}`;
+}
+
 function setupForms() {
-  document.getElementById('fleetForm').addEventListener('submit', event => {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const entry = {
-      unitId: formData.get('unitId'),
-      ownership: formData.get('ownership'),
-      model: formData.get('model'),
-      capacity: formData.get('capacity'),
-      status: formData.get('status'),
-      supplier: formData.get('ownership') === 'rent-in' ? formData.get('supplier') : ''
-    };
-    state.fleet.unshift(entry);
-    persistState();
-    renderFleet();
-    closeModal('fleetModal');
-  });
+  const fleetForm = document.getElementById('fleetForm');
+  const driverForm = document.getElementById('driverForm');
+  const tripForm = document.getElementById('tripForm');
+  const invoiceForm = document.getElementById('invoiceForm');
+  const supplierForm = document.getElementById('supplierForm');
+  const supplierDirectoryForm = document.getElementById('supplierDirectoryForm');
 
-  document.getElementById('driverForm').addEventListener('submit', event => {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const entry = {
-      name: formData.get('name'),
-      license: formData.get('license'),
-      phone: formData.get('phone'),
-      availability: formData.get('availability')
-    };
-    state.drivers.unshift(entry);
-    persistState();
-    renderDrivers();
-    closeModal('driverModal');
-  });
+  if (fleetForm) {
+    selectRefs.fleetSupplier = fleetForm.querySelector('select[name="supplier"]');
+    fleetOwnershipSelect = fleetForm.querySelector('select[name="ownership"]');
+    fleetForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const formData = new FormData(fleetForm);
+      const ownership = formData.get('ownership');
+      const entry = {
+        unitId: formData.get('unitId'),
+        fleetType: formData.get('fleetType'),
+        ownership,
+        model: formData.get('model'),
+        capacity: formData.get('capacity'),
+        status: formData.get('status'),
+        supplier: ownership === 'rent-in' ? formData.get('supplier') : ''
+      };
+      state.fleet.unshift(entry);
+      persistState();
+      renderFleet();
+      updateAllSelectOptions();
+      closeModal('fleetModal');
+    });
+    if (fleetOwnershipSelect && selectRefs.fleetSupplier) {
+      fleetOwnershipSelect.addEventListener('change', () => {
+        toggleDependentSelect(selectRefs.fleetSupplier, fleetOwnershipSelect.value === 'rent-in');
+      });
+      toggleDependentSelect(selectRefs.fleetSupplier, fleetOwnershipSelect.value === 'rent-in');
+    }
+  }
 
-  document.getElementById('tripForm').addEventListener('submit', event => {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const entry = {
-      tripId: formData.get('tripId'),
-      date: formData.get('date'),
-      customer: formData.get('customer'),
-      vehicle: formData.get('vehicle'),
-      driver: formData.get('driver'),
-      route: formData.get('route'),
-      status: formData.get('status')
-    };
-    state.trips.unshift(entry);
-    persistState();
-    renderTrips();
-    closeModal('tripModal');
-  });
+  if (driverForm) {
+    selectRefs.driverSupplier = driverForm.querySelector('select[name="supplier"]');
+    driverAffiliationSelect = driverForm.querySelector('select[name="affiliation"]');
+    driverForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const formData = new FormData(driverForm);
+      const affiliation = formData.get('affiliation');
+      const supplierName = affiliation === 'supplier' ? formData.get('supplier') : '';
+      const entry = {
+        name: formData.get('name'),
+        license: formData.get('license'),
+        phone: formData.get('phone'),
+        availability: formData.get('availability'),
+        affiliation,
+        supplier: supplierName
+      };
+      state.drivers.unshift(entry);
+      persistState();
+      renderDrivers();
+      updateAllSelectOptions();
+      closeModal('driverModal');
+    });
+    if (driverAffiliationSelect && selectRefs.driverSupplier) {
+      driverAffiliationSelect.addEventListener('change', () => {
+        const isSupplier = driverAffiliationSelect.value === 'supplier';
+        toggleDependentSelect(selectRefs.driverSupplier, isSupplier);
+      });
+      toggleDependentSelect(selectRefs.driverSupplier, driverAffiliationSelect.value === 'supplier');
+    }
+  }
 
-  document.getElementById('invoiceForm').addEventListener('submit', event => {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const entry = {
-      invoice: formData.get('invoice'),
-      customer: formData.get('customer'),
-      trip: formData.get('trip'),
-      amount: Number(formData.get('amount')),
-      dueDate: formData.get('dueDate'),
-      status: formData.get('status'),
-      notes: formData.get('notes')
-    };
-    state.invoices.unshift(entry);
-    persistState();
-    renderInvoices();
-    closeModal('invoiceModal');
-  });
+  if (tripForm) {
+    tripIdInput = tripForm.querySelector('input[name="tripId"]');
+    selectRefs.tripCustomer = tripForm.querySelector('select[name="customer"]');
+    selectRefs.tripVehicle = tripForm.querySelector('select[name="vehicle"]');
+    selectRefs.tripDriver = tripForm.querySelector('select[name="driver"]');
+    if (selectRefs.tripCustomer) {
+      selectRefs.tripCustomer.addEventListener('change', () => handleAllowNewSelection(selectRefs.tripCustomer));
+    }
+    tripForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const formData = new FormData(tripForm);
+      const customer = formData.get('customer');
+      const rentalCharges = Number(formData.get('rentalCharges'));
+      const tripId = formatTripId(state.nextTripNumber);
+      state.nextTripNumber += 1;
+      const entry = {
+        tripId,
+        date: formData.get('date'),
+        customer,
+        vehicle: formData.get('vehicle'),
+        driver: formData.get('driver'),
+        route: formData.get('route'),
+        rentalCharges,
+        status: formData.get('status')
+      };
+      ensureCustomer(customer);
+      state.trips.unshift(entry);
+      persistState();
+      renderTrips();
+      updateAllSelectOptions();
+      closeModal('tripModal');
+    });
+  }
 
-  document.getElementById('supplierForm').addEventListener('submit', event => {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const entry = {
-      reference: formData.get('reference'),
-      supplier: formData.get('supplier'),
-      vehicle: formData.get('vehicle'),
-      amount: Number(formData.get('amount')),
-      dueDate: formData.get('dueDate'),
-      status: formData.get('status'),
-      notes: formData.get('notes')
-    };
-    state.suppliers.unshift(entry);
-    persistState();
-    renderSuppliers();
-    closeModal('supplierModal');
-  });
+  if (invoiceForm) {
+    selectRefs.invoiceCustomer = invoiceForm.querySelector('select[name="customer"]');
+    selectRefs.invoiceTrip = invoiceForm.querySelector('select[name="trip"]');
+    if (selectRefs.invoiceCustomer) {
+      selectRefs.invoiceCustomer.addEventListener('change', () => handleAllowNewSelection(selectRefs.invoiceCustomer));
+    }
+    invoiceForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const formData = new FormData(invoiceForm);
+      const customer = formData.get('customer');
+      const entry = {
+        invoice: formData.get('invoice'),
+        customer,
+        trip: formData.get('trip'),
+        amount: Number(formData.get('amount')),
+        dueDate: formData.get('dueDate'),
+        status: formData.get('status'),
+        notes: formData.get('notes')
+      };
+      ensureCustomer(customer);
+      state.invoices.unshift(entry);
+      persistState();
+      renderInvoices();
+      updateAllSelectOptions();
+      closeModal('invoiceModal');
+    });
+  }
+
+  if (supplierForm) {
+    selectRefs.supplierPaymentSupplier = supplierForm.querySelector('select[name="supplier"]');
+    selectRefs.supplierPaymentVehicle = supplierForm.querySelector('select[name="vehicle"]');
+    supplierForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const formData = new FormData(supplierForm);
+      const entry = {
+        reference: formData.get('reference'),
+        supplier: formData.get('supplier'),
+        vehicle: formData.get('vehicle'),
+        amount: Number(formData.get('amount')),
+        dueDate: formData.get('dueDate'),
+        status: formData.get('status'),
+        notes: formData.get('notes')
+      };
+      state.suppliers.unshift(entry);
+      persistState();
+      renderSuppliers();
+      updateAllSelectOptions();
+      closeModal('supplierModal');
+    });
+  }
+
+  if (supplierDirectoryForm) {
+    supplierDirectoryForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const formData = new FormData(supplierDirectoryForm);
+      const entry = {
+        name: formData.get('name'),
+        contact: formData.get('contact'),
+        phone: formData.get('phone'),
+        email: formData.get('email')
+      };
+      state.supplierDirectory.unshift(entry);
+      persistState();
+      renderSupplierDirectory();
+      updateAllSelectOptions();
+      closeModal('supplierDirectoryModal');
+    });
+  }
 }
 
 function setupFilters() {
@@ -196,6 +466,7 @@ function setupFilters() {
 function renderAll() {
   renderFleet();
   renderDrivers();
+  renderSupplierDirectory();
   renderTrips();
   renderInvoices();
   renderSuppliers();
@@ -209,6 +480,7 @@ function renderFleet() {
       const statusClass = statusClassName(item.status);
       return `<tr>
         <td data-label="Unit ID">${escapeHtml(item.unitId)}</td>
+        <td data-label="Fleet Type">${escapeHtml(item.fleetType || '')}</td>
         <td data-label="Type"><span class="status-pill ${item.ownership === 'owned' ? 'status-Available' : 'status-Scheduled'}">${item.ownership === 'owned' ? 'Company Owned' : 'Rent-In'}</span></td>
         <td data-label="Make & Model">${escapeHtml(item.model)}</td>
         <td data-label="Capacity">${escapeHtml(item.capacity || '')}</td>
@@ -221,11 +493,29 @@ function renderFleet() {
 
 function renderDrivers() {
   dom.driverTable.innerHTML = state.drivers
+    .map(item => {
+      const affiliationLabel = item.affiliation === 'supplier'
+        ? `Supplier${item.supplier ? ` (${item.supplier})` : ''}`
+        : 'Company';
+      return `<tr>
+        <td data-label="Name">${escapeHtml(item.name)}</td>
+        <td data-label="License No.">${escapeHtml(item.license)}</td>
+        <td data-label="Phone"><a href="tel:${escapeHtml(item.phone)}">${escapeHtml(item.phone)}</a></td>
+        <td data-label="Availability"><span class="status-pill ${statusClassName(item.availability)}">${escapeHtml(item.availability)}</span></td>
+        <td data-label="Affiliation">${escapeHtml(affiliationLabel)}</td>
+      </tr>`;
+    })
+    .join('');
+}
+
+function renderSupplierDirectory() {
+  if (!dom.supplierDirectoryTable) return;
+  dom.supplierDirectoryTable.innerHTML = (state.supplierDirectory || [])
     .map(item => `<tr>
       <td data-label="Name">${escapeHtml(item.name)}</td>
-      <td data-label="License No.">${escapeHtml(item.license)}</td>
-      <td data-label="Phone"><a href="tel:${escapeHtml(item.phone)}">${escapeHtml(item.phone)}</a></td>
-      <td data-label="Availability"><span class="status-pill ${statusClassName(item.availability)}">${escapeHtml(item.availability)}</span></td>
+      <td data-label="Contact">${escapeHtml(item.contact || '')}</td>
+      <td data-label="Phone">${escapeHtml(item.phone || '')}</td>
+      <td data-label="Email">${escapeHtml(item.email || '')}</td>
     </tr>`)
     .join('');
 }
@@ -239,6 +529,7 @@ function renderTrips() {
       <td data-label="Vehicle">${escapeHtml(item.vehicle)}</td>
       <td data-label="Driver">${escapeHtml(item.driver)}</td>
       <td data-label="Route">${escapeHtml(item.route || '')}</td>
+      <td data-label="Rental Charges">${formatCurrency(typeof item.rentalCharges === 'number' ? item.rentalCharges : Number(item.rentalCharges))}</td>
       <td data-label="Status"><span class="status-pill ${statusClassName(item.status)}">${escapeHtml(item.status)}</span></td>
     </tr>`)
     .join('');
@@ -347,6 +638,12 @@ function exportWorkbook() {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.trips), 'Trips');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.invoices), 'Customer Invoices');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.suppliers), 'Supplier Payments');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.supplierDirectory), 'Suppliers');
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.json_to_sheet(state.customers.map(name => ({ Customer: name }))),
+    'Customers'
+  );
   XLSX.writeFile(wb, `Azmat-fleet-data-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
@@ -396,6 +693,11 @@ function printInvoice(invoiceId) {
   }
 
   if (trip) {
+    const tripChargeValue = typeof trip.rentalCharges === 'number' ? trip.rentalCharges : Number(trip.rentalCharges);
+    if (!Number.isNaN(tripChargeValue)) {
+      doc.text(`Trip Rental Charges: ${formatCurrency(tripChargeValue)}`, 40, cursorY);
+      cursorY += lineHeight;
+    }
     cursorY += lineHeight;
     doc.setFont('helvetica', 'bold');
     doc.text('Trip Details', 40, cursorY);

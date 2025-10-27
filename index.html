@@ -28,6 +28,11 @@
         <p>Track company owned and rent-in vehicles from partner suppliers.</p>
         <button class="btn secondary">Add Fleet</button>
       </article>
+      <article class="card" data-modal="supplierDirectoryModal">
+        <h2>Supplier Directory</h2>
+        <p>Maintain details of partner suppliers for rent-in operations.</p>
+        <button class="btn secondary">Add Supplier</button>
+      </article>
       <article class="card" data-modal="driverModal">
         <h2>Drivers</h2>
         <p>Maintain driver roster and availability.</p>
@@ -67,6 +72,7 @@
           <thead>
             <tr>
               <th>Unit ID</th>
+              <th>Fleet Type</th>
               <th>Type</th>
               <th>Make &amp; Model</th>
               <th>Capacity</th>
@@ -91,6 +97,26 @@
               <th>License No.</th>
               <th>Phone</th>
               <th>Availability</th>
+              <th>Affiliation</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <div class="section-header">
+        <h2>Supplier Directory</h2>
+      </div>
+      <div class="table-wrapper">
+        <table id="supplierDirectoryTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Contact</th>
+              <th>Phone</th>
+              <th>Email</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -112,6 +138,7 @@
               <th>Vehicle</th>
               <th>Driver</th>
               <th>Route</th>
+              <th>Rental Charges</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -200,6 +227,18 @@
         <label>Unit ID
           <input type="text" name="unitId" required />
         </label>
+        <label>Fleet Type
+          <select name="fleetType" required>
+            <option value="">Select fleet type</option>
+            <option value="Truck">Truck</option>
+            <option value="Bus">Bus</option>
+            <option value="Van">Van</option>
+            <option value="SUV">SUV</option>
+            <option value="Car">Car</option>
+            <option value="Trailer">Trailer</option>
+            <option value="Equipment">Equipment</option>
+          </select>
+        </label>
         <label>Ownership
           <select name="ownership" required>
             <option value="owned">Company Owned</option>
@@ -220,7 +259,9 @@
           </select>
         </label>
         <label>Supplier (for rent-in)
-          <input type="text" name="supplier" placeholder="Supplier name" />
+          <select name="supplier" disabled>
+            <option value="">Select supplier</option>
+          </select>
         </label>
         <button type="submit" class="btn primary">Save Unit</button>
       </form>
@@ -251,6 +292,17 @@
             <option value="Leave">Leave</option>
           </select>
         </label>
+        <label>Affiliation
+          <select name="affiliation" required>
+            <option value="company">Company</option>
+            <option value="supplier">Supplier</option>
+          </select>
+        </label>
+        <label>Supplier
+          <select name="supplier" disabled>
+            <option value="">Select supplier</option>
+          </select>
+        </label>
         <button type="submit" class="btn primary">Save Driver</button>
       </form>
     </div>
@@ -265,22 +317,31 @@
       </header>
       <form id="tripForm" class="form-grid">
         <label>Trip ID
-          <input type="text" name="tripId" required />
+          <input type="text" name="tripId" readonly />
         </label>
         <label>Date
           <input type="date" name="date" required />
         </label>
         <label>Customer
-          <input type="text" name="customer" required />
+          <select name="customer" data-allow-new="true" data-label="customer" required>
+            <option value="">Select customer</option>
+          </select>
         </label>
         <label>Vehicle ID
-          <input type="text" name="vehicle" required />
+          <select name="vehicle" required>
+            <option value="">Select vehicle</option>
+          </select>
         </label>
         <label>Driver Name
-          <input type="text" name="driver" required />
+          <select name="driver" required>
+            <option value="">Select driver</option>
+          </select>
         </label>
         <label>Route / Purpose
           <input type="text" name="route" />
+        </label>
+        <label>Rental Charges
+          <input type="number" name="rentalCharges" min="0" step="0.01" required />
         </label>
         <label>Status
           <select name="status" required>
@@ -306,10 +367,14 @@
           <input type="text" name="invoice" required />
         </label>
         <label>Customer
-          <input type="text" name="customer" required />
+          <select name="customer" data-allow-new="true" data-label="customer" required>
+            <option value="">Select customer</option>
+          </select>
         </label>
         <label>Trip Reference
-          <input type="text" name="trip" />
+          <select name="trip">
+            <option value="">Select trip</option>
+          </select>
         </label>
         <label>Amount
           <input type="number" name="amount" min="0" step="0.01" required />
@@ -345,10 +410,14 @@
           <input type="text" name="reference" required />
         </label>
         <label>Supplier Name
-          <input type="text" name="supplier" required />
+          <select name="supplier" required>
+            <option value="">Select supplier</option>
+          </select>
         </label>
         <label>Vehicle ID
-          <input type="text" name="vehicle" />
+          <select name="vehicle">
+            <option value="">Select vehicle</option>
+          </select>
         </label>
         <label>Amount
           <input type="number" name="amount" min="0" step="0.01" required />
@@ -370,5 +439,31 @@
       </form>
     </div>
   </div>
+
+
+<div class="modal" id="supplierDirectoryModal" aria-hidden="true">
+  <div class="modal-content">
+    <header>
+      <h3>Add Supplier</h3>
+      <button class="close" data-close>&times;</button>
+    </header>
+    <form id="supplierDirectoryForm" class="form-grid">
+      <label>Supplier Name
+        <input type="text" name="name" required />
+      </label>
+      <label>Contact Person
+        <input type="text" name="contact" />
+      </label>
+      <label>Phone
+        <input type="tel" name="phone" />
+      </label>
+      <label>Email
+        <input type="email" name="email" />
+      </label>
+      <button type="submit" class="btn primary">Save Supplier</button>
+    </form>
+  </div>
+</div>
+
 </body>
 </html>
