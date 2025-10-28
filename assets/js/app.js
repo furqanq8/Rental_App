@@ -7,6 +7,11 @@ const defaultState = {
   suppliers: [],
   supplierDirectory: [],
   customers: [],
+  dashboardFilter: {
+    mode: 'thisMonth',
+    start: '',
+    end: ''
+  },
   nextTripNumber: 1
 };
 
@@ -67,6 +72,15 @@ function normalizeState(parsed) {
   if (parsed && typeof parsed === 'object') {
     Object.assign(base, parsed);
   }
+  if (!base.dashboardFilter || typeof base.dashboardFilter !== 'object') {
+    base.dashboardFilter = { ...defaultState.dashboardFilter };
+  } else {
+    base.dashboardFilter = {
+      mode: base.dashboardFilter.mode || defaultState.dashboardFilter.mode,
+      start: base.dashboardFilter.start || '',
+      end: base.dashboardFilter.end || ''
+    };
+  }
   if (!Array.isArray(base.supplierDirectory)) {
     base.supplierDirectory = [];
   }
@@ -115,6 +129,247 @@ function persistState() {
   }
 }
 
+function parseDateValue(value) {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return new Date(value.getTime());
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function startOfDay(date) {
+  if (!date) return null;
+  const clone = new Date(date.getTime());
+  clone.setHours(0, 0, 0, 0);
+  return clone;
+}
+
+function endOfDay(date) {
+  if (!date) return null;
+  const clone = new Date(date.getTime());
+  clone.setHours(23, 59, 59, 999);
+  return clone;
+}
+
+function getDashboardDateRange() {
+  const filter = state.dashboardFilter || defaultState.dashboardFilter;
+  const mode = filter.mode || defaultState.dashboardFilter.mode;
+  const now = new Date();
+  let start = null;
+  let end = null;
+
+  if (mode === 'thisMonth') {
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    start = startOfDay(firstDay);
+    end = endOfDay(lastDay);
+  } else if (mode === 'lastMonth') {
+    const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth(), 0);
+    start = startOfDay(firstDay);
+    end = endOfDay(lastDay);
+  } else if (mode === 'custom') {
+    const customStart = parseDateValue(filter.start);
+    const customEnd = parseDateValue(filter.end);
+    if (customStart) start = startOfDay(customStart);
+    if (customEnd) end = endOfDay(customEnd);
+  }
+
+  if (start && end && start.getTime() > end.getTime()) {
+    const temp = start;
+    start = end;
+    end = temp;
+  }
+
+  return { start, end, mode };
+}
+
+function filterRecordsByDateRange(collection, dateAccessor, range) {
+  if (!Array.isArray(collection)) return [];
+  const validItems = collection.filter(Boolean);
+  if (!range || (!range.start && !range.end)) {
+    return validItems;
+  }
+  const startTime = range.start ? range.start.getTime() : null;
+  const endTime = range.end ? range.end.getTime() : null;
+  return validItems.filter(item => {
+    const rawDate = dateAccessor(item);
+    const parsed = parseDateValue(rawDate);
+    if (!parsed) return false;
+    const time = parsed.getTime();
+    if (startTime !== null && time < startTime) return false;
+    if (endTime !== null && time > endTime) return false;
+    return true;
+  });
+}
+
+function normalizedDateString(value) {
+  const parsed = parseDateValue(value);
+  return parsed ? parsed.toISOString().slice(0, 10) : '';
+}
+
+function defaultDueDate(tripDate) {
+  return normalizedDateString(tripDate) || new Date().toISOString().slice(0, 10);
+}
+
+function sanitizeIdentifier(value, fallback) {
+  const base = String(value || '').trim().replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '');
+  return base || fallback;
+}
+
+function generateInvoiceNumber(tripId) {
+  const fallback = `TRIP-${String(state.nextTripNumber || 1).padStart(4, '0')}`;
+  const base = sanitizeIdentifier(tripId, fallback);
+  let candidate = `INV-${base}`;
+  let suffix = 1;
+  while (state.invoices.some(invoice => invoice && invoice.invoice === candidate)) {
+    candidate = `INV-${base}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function generateSupplierPaymentReference(tripId) {
+  const fallback = `TRIP-${String(state.nextTripNumber || 1).padStart(4, '0')}`;
+  const base = sanitizeIdentifier(tripId, fallback);
+  let candidate = `SUP-${base}`;
+  let suffix = 1;
+  while (state.suppliers.some(payment => payment && payment.reference === candidate)) {
+    candidate = `SUP-${base}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function getVehicleSupplier(vehicleId) {
+  if (!vehicleId) return '';
+  const match = state.fleet.find(item => item && item.unitId === vehicleId);
+  return match && match.supplier ? match.supplier : '';
+}
+
+function ensureInvoiceForTrip(trip) {
+  if (!trip) return false;
+  const existing = state.invoices.find(invoice => invoice && invoice.trip === trip.tripId);
+  const amount = numericAmount(trip.rentalCharges);
+  const dueDate = defaultDueDate(trip.date);
+  const customer = trip.customer || '';
+
+  if (existing) {
+    let changed = false;
+    if (!existing.invoice) {
+      existing.invoice = generateInvoiceNumber(trip.tripId);
+      changed = true;
+    }
+    if (!existing.trip && trip.tripId) {
+      existing.trip = trip.tripId;
+      changed = true;
+    }
+    if (!existing.customer && customer) {
+      existing.customer = customer;
+      ensureCustomer(customer);
+      changed = true;
+    }
+    if (String(existing.status).toLowerCase() === 'pending') {
+      if (numericAmount(existing.amount) !== amount) {
+        existing.amount = amount;
+        changed = true;
+      }
+      if (!existing.dueDate && dueDate) {
+        existing.dueDate = dueDate;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  const invoiceNumber = generateInvoiceNumber(trip.tripId);
+  const newInvoice = {
+    invoice: invoiceNumber,
+    customer,
+    trip: trip.tripId || '',
+    amount,
+    dueDate,
+    status: 'Pending',
+    notes: 'Auto-generated from completed trip'
+  };
+  state.invoices.unshift(newInvoice);
+  ensureCustomer(customer);
+  return true;
+}
+
+function ensureSupplierPaymentForTrip(trip) {
+  if (!trip) return false;
+  const ownership = String(getTripOwnership(trip) || '').toLowerCase();
+  if (ownership !== 'rent-in') return false;
+  const supplierName = getVehicleSupplier(trip.vehicle);
+  if (!supplierName) return false;
+  const amount = numericAmount(trip.rentalCharges);
+  const dueDate = defaultDueDate(trip.date);
+
+  const existing = state.suppliers.find(payment => payment && payment.trip === trip.tripId);
+  if (existing) {
+    let changed = false;
+    if (!existing.reference) {
+      existing.reference = generateSupplierPaymentReference(trip.tripId);
+      changed = true;
+    }
+    if (!existing.supplier) {
+      existing.supplier = supplierName;
+      changed = true;
+    }
+    if (!existing.vehicle && trip.vehicle) {
+      existing.vehicle = trip.vehicle;
+      changed = true;
+    }
+    if (String(existing.status).toLowerCase() === 'pending' && numericAmount(existing.amount) !== amount) {
+      existing.amount = amount;
+      changed = true;
+    }
+    if (!existing.dueDate && dueDate) {
+      existing.dueDate = dueDate;
+      changed = true;
+    }
+    return changed;
+  }
+
+  const payment = {
+    reference: generateSupplierPaymentReference(trip.tripId),
+    supplier: supplierName,
+    vehicle: trip.vehicle || '',
+    trip: trip.tripId || '',
+    amount,
+    dueDate,
+    status: 'Pending',
+    notes: 'Auto-generated from completed rent-in trip'
+  };
+  state.suppliers.unshift(payment);
+  return true;
+}
+
+function handleTripFinancialAutomation(trip) {
+  const result = { invoice: false, supplier: false };
+  if (!trip || String(trip.status).toLowerCase() !== 'completed') {
+    return result;
+  }
+  result.invoice = ensureInvoiceForTrip(trip);
+  result.supplier = ensureSupplierPaymentForTrip(trip);
+  return result;
+}
+
+function reconcileCompletedTripFinancials() {
+  let mutated = false;
+  (state.trips || []).forEach(trip => {
+    const result = handleTripFinancialAutomation(trip);
+    if (result.invoice || result.supplier) {
+      mutated = true;
+    }
+  });
+  if (mutated) {
+    persistState();
+  }
+}
+
 const dom = {
   year: document.getElementById('year'),
   cards: document.querySelectorAll('.card'),
@@ -144,6 +399,12 @@ const dom = {
     supplierPendingCount: document.getElementById('statSupplierPendingCount'),
     netCashFlow: document.getElementById('statNetCashFlow'),
     netOutstanding: document.getElementById('statNetOutstanding')
+  },
+  dashboardControls: {
+    buttons: document.querySelectorAll('#dashboardRangeButtons [data-range]'),
+    customRange: document.getElementById('dashboardCustomRange'),
+    start: document.getElementById('dashboardRangeStart'),
+    end: document.getElementById('dashboardRangeEnd')
   }
 };
 
@@ -215,6 +476,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupModals();
   setupForms();
   setupFilters();
+  reconcileCompletedTripFinancials();
   dom.exportBtn.addEventListener('click', exportWorkbook);
 
   renderAll();
@@ -665,8 +927,15 @@ function setupForms() {
       } else {
         state.trips.unshift(entry);
       }
+      const automationResult = handleTripFinancialAutomation(entry);
       persistState();
       renderTrips();
+      if (automationResult.invoice) {
+        renderInvoices();
+      }
+      if (automationResult.supplier) {
+        renderSuppliers();
+      }
       updateAllSelectOptions();
       closeModal('tripModal');
     });
@@ -777,9 +1046,98 @@ function setupForms() {
 }
 
 function setupFilters() {
-  dom.fleetFilter.addEventListener('change', renderFleet);
-  dom.invoiceFilter.addEventListener('change', renderInvoices);
-  dom.supplierFilter.addEventListener('change', renderSuppliers);
+  if (dom.fleetFilter) {
+    dom.fleetFilter.addEventListener('change', renderFleet);
+  }
+  if (dom.invoiceFilter) {
+    dom.invoiceFilter.addEventListener('change', renderInvoices);
+  }
+  if (dom.supplierFilter) {
+    dom.supplierFilter.addEventListener('change', renderSuppliers);
+  }
+  setupDashboardRangeControls();
+}
+
+function setupDashboardRangeControls() {
+  const controls = dom.dashboardControls || {};
+  const buttons = controls.buttons ? Array.from(controls.buttons) : [];
+  buttons.forEach(button => {
+    button.addEventListener('click', () => {
+      const mode = button.dataset.range;
+      if (mode) {
+        setDashboardRangeMode(mode);
+      }
+    });
+  });
+  if (controls.start) {
+    controls.start.addEventListener('change', handleCustomRangeInputChange);
+  }
+  if (controls.end) {
+    controls.end.addEventListener('change', handleCustomRangeInputChange);
+  }
+  syncDashboardFilterControls();
+}
+
+function setDashboardRangeMode(mode) {
+  if (!mode) return;
+  if (!state.dashboardFilter || typeof state.dashboardFilter !== 'object') {
+    state.dashboardFilter = { ...defaultState.dashboardFilter };
+  }
+  if (state.dashboardFilter.mode === mode) {
+    toggleCustomRangeVisibility(mode === 'custom');
+    syncDashboardFilterControls();
+    updateDashboard();
+    return;
+  }
+  state.dashboardFilter.mode = mode;
+  if (mode !== 'custom') {
+    state.dashboardFilter.start = '';
+    state.dashboardFilter.end = '';
+  }
+  persistState();
+  syncDashboardFilterControls();
+  updateDashboard();
+}
+
+function handleCustomRangeInputChange() {
+  if (!state.dashboardFilter || typeof state.dashboardFilter !== 'object') {
+    state.dashboardFilter = { ...defaultState.dashboardFilter };
+  }
+  const controls = dom.dashboardControls || {};
+  if (controls.start) {
+    state.dashboardFilter.start = controls.start.value || '';
+  }
+  if (controls.end) {
+    state.dashboardFilter.end = controls.end.value || '';
+  }
+  state.dashboardFilter.mode = 'custom';
+  persistState();
+  syncDashboardFilterControls();
+  updateDashboard();
+}
+
+function syncDashboardFilterControls() {
+  const controls = dom.dashboardControls || {};
+  const filter = state.dashboardFilter || defaultState.dashboardFilter;
+  const mode = filter.mode || defaultState.dashboardFilter.mode;
+  const buttons = controls.buttons ? Array.from(controls.buttons) : [];
+  buttons.forEach(button => {
+    const isActive = button.dataset.range === mode;
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+  if (controls.start) {
+    controls.start.value = filter.start || '';
+  }
+  if (controls.end) {
+    controls.end.value = filter.end || '';
+  }
+  toggleCustomRangeVisibility(mode === 'custom');
+}
+
+function toggleCustomRangeVisibility(shouldShow) {
+  const controls = dom.dashboardControls || {};
+  if (!controls.customRange) return;
+  controls.customRange.classList.toggle('active', Boolean(shouldShow));
 }
 
 function renderAll() {
@@ -993,17 +1351,22 @@ function updateDashboard() {
     netOutstanding
   } = dom.dashboard;
 
-  const totalTripsCount = state.trips.length;
-  const completedTrips = state.trips.filter(trip => trip && String(trip.status).toLowerCase() === 'completed').length;
+  const range = getDashboardDateRange();
+  const tripsInRange = filterRecordsByDateRange(state.trips, trip => trip && trip.date, range);
+  const invoicesInRange = filterRecordsByDateRange(state.invoices, invoice => invoice && invoice.dueDate, range);
+  const suppliersInRange = filterRecordsByDateRange(state.suppliers, payment => payment && payment.dueDate, range);
+
+  const totalTripsCount = tripsInRange.length;
+  const completedTrips = tripsInRange.filter(trip => trip && String(trip.status).toLowerCase() === 'completed').length;
   const activeTrips = Math.max(totalTripsCount - completedTrips, 0);
 
   setTextContent(totalTrips, String(totalTripsCount));
   setTextContent(tripBreakdown, `Active: ${activeTrips} • Completed: ${completedTrips}`);
 
-  const invoicesPaid = state.invoices.filter(invoice => invoice && String(invoice.status).toLowerCase() === 'paid');
-  const invoicesPending = state.invoices.filter(invoice => invoice && String(invoice.status).toLowerCase() !== 'paid');
-  const suppliersPaid = state.suppliers.filter(payment => payment && String(payment.status).toLowerCase() === 'paid');
-  const suppliersPending = state.suppliers.filter(payment => payment && String(payment.status).toLowerCase() !== 'paid');
+  const invoicesPaid = invoicesInRange.filter(invoice => invoice && String(invoice.status).toLowerCase() === 'paid');
+  const invoicesPending = invoicesInRange.filter(invoice => invoice && String(invoice.status).toLowerCase() !== 'paid');
+  const suppliersPaid = suppliersInRange.filter(payment => payment && String(payment.status).toLowerCase() === 'paid');
+  const suppliersPending = suppliersInRange.filter(payment => payment && String(payment.status).toLowerCase() !== 'paid');
 
   const paidInAmount = invoicesPaid.reduce((sum, invoice) => sum + numericAmount(invoice.amount), 0);
   const pendingInAmount = invoicesPending.reduce((sum, invoice) => sum + numericAmount(invoice.amount), 0);

@@ -79,6 +79,78 @@ main {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.dashboard-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.dashboard-range-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.range-button {
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--primary-dark);
+  border-radius: 999px;
+  padding: 0.55rem 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.range-button:hover {
+  border-color: rgba(30, 136, 229, 0.6);
+  box-shadow: 0 8px 18px rgba(18, 53, 91, 0.12);
+}
+
+.range-button[aria-pressed='true'] {
+  background: linear-gradient(120deg, var(--primary), #42a5f5);
+  border-color: rgba(30, 136, 229, 0.7);
+  color: #ffffff;
+  box-shadow: 0 12px 26px rgba(30, 136, 229, 0.3);
+}
+
+.range-button:focus-visible {
+  outline: 2px solid rgba(30, 136, 229, 0.9);
+  outline-offset: 2px;
+}
+
+.dashboard-custom-range {
+  display: none;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.dashboard-custom-range.active {
+  display: flex;
+}
+
+.dashboard-custom-range label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.dashboard-custom-range input {
+  min-width: 160px;
+}
+
 .dashboard-card {
   background: linear-gradient(135deg, rgba(30, 136, 229, 0.1), rgba(30, 136, 229, 0.02));
   border: 1px solid rgba(30, 136, 229, 0.12);
@@ -346,6 +418,18 @@ textarea {
 
   .dashboard-grid {
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .dashboard-controls {
+    align-items: stretch;
+  }
+
+  .dashboard-range-buttons {
+    justify-content: flex-start;
+  }
+
+  .dashboard-custom-range {
+    justify-content: flex-start;
   }
 
   .cards-grid {

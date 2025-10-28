@@ -24,8 +24,27 @@
   <main>
     <section class="dashboard" aria-label="Operational dashboard">
       <div class="section-header">
-        <h2>Business Overview</h2>
-        <p class="section-subtitle">Monitor trip activity alongside customer and supplier payment health.</p>
+        <div class="section-heading">
+          <h2>Business Overview</h2>
+          <p class="section-subtitle">Monitor trip activity alongside customer and supplier payment health.</p>
+        </div>
+        <div class="dashboard-controls" aria-label="Dashboard performance range">
+          <div class="dashboard-range-buttons" id="dashboardRangeButtons" role="group" aria-label="Select performance range">
+            <button type="button" class="range-button" data-range="thisMonth">This Month</button>
+            <button type="button" class="range-button" data-range="lastMonth">Last Month</button>
+            <button type="button" class="range-button" data-range="custom">Custom</button>
+          </div>
+          <div class="dashboard-custom-range" id="dashboardCustomRange">
+            <label>
+              From
+              <input type="date" id="dashboardRangeStart" />
+            </label>
+            <label>
+              To
+              <input type="date" id="dashboardRangeEnd" />
+            </label>
+          </div>
+        </div>
       </div>
       <div class="dashboard-grid">
         <article class="dashboard-card">
