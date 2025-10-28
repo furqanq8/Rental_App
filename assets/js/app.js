@@ -47,10 +47,24 @@ const modalEditSubmitLabels = {
   supplierDirectoryModal: 'Update Supplier'
 };
 
+function normalizeText(value) {
+  return value ? String(value).trim().toLowerCase() : '';
+}
+
+function normalizeUnitId(value) {
+  return normalizeText(value);
+}
+
+function findFleetUnit(vehicleId, fleetList = state.fleet) {
+  if (!vehicleId) return null;
+  const collection = Array.isArray(fleetList) ? fleetList : [];
+  const normalized = normalizeUnitId(vehicleId);
+  return collection.find(item => item && normalizeUnitId(item.unitId) === normalized) || null;
+}
+
 function findVehicleOwnership(vehicleId, fleetList = state.fleet) {
   if (!vehicleId) return '';
-  const source = Array.isArray(fleetList) ? fleetList : [];
-  const match = source.find(item => item && item.unitId === vehicleId);
+  const match = findFleetUnit(vehicleId, fleetList);
   return match ? match.ownership || '' : '';
 }
 
@@ -95,6 +109,35 @@ function normalizeState(parsed) {
 }
 
 function hydrateDerivedCollections(currentState) {
+  if (!Array.isArray(currentState.fleet)) {
+    currentState.fleet = [];
+  } else {
+    const seenUnitIds = new Set();
+    currentState.fleet = currentState.fleet.filter(item => {
+      if (!item) return false;
+      const trimmedId = item.unitId ? String(item.unitId).trim() : '';
+      if (!trimmedId) return false;
+      item.unitId = trimmedId;
+      if (item.supplier) {
+        item.supplier = String(item.supplier).trim();
+      }
+      const normalized = normalizeUnitId(trimmedId);
+      if (seenUnitIds.has(normalized)) {
+        return false;
+      }
+      seenUnitIds.add(normalized);
+      return true;
+    });
+  }
+  if (!Array.isArray(currentState.drivers)) {
+    currentState.drivers = [];
+  } else {
+    currentState.drivers.forEach(driver => {
+      if (driver && driver.supplier) {
+        driver.supplier = String(driver.supplier).trim();
+      }
+    });
+  }
   const customers = new Set(currentState.customers || []);
   (currentState.trips || []).forEach(trip => {
     if (trip && trip.customer) customers.add(trip.customer);
@@ -244,7 +287,7 @@ function generateSupplierPaymentReference(tripId) {
 
 function getVehicleSupplier(vehicleId) {
   if (!vehicleId) return '';
-  const match = state.fleet.find(item => item && item.unitId === vehicleId);
+  const match = findFleetUnit(vehicleId);
   return match && match.supplier ? match.supplier : '';
 }
 
@@ -697,10 +740,17 @@ function refreshTripDriverOptions(preservedDriver) {
   const vehicleSelect = selectRefs.tripVehicle;
   if (!driverSelect) return;
   const vehicleId = vehicleSelect ? vehicleSelect.value : '';
-  const ownership = getVehicleOwnership(vehicleId);
-  let drivers = state.drivers;
+  const vehicleEntry = findFleetUnit(vehicleId);
+  const ownership = vehicleEntry ? vehicleEntry.ownership : getVehicleOwnership(vehicleId);
+  const vehicleSupplier = vehicleEntry && vehicleEntry.supplier ? vehicleEntry.supplier : '';
+  const normalizedVehicleSupplier = normalizeText(vehicleSupplier);
+  let drivers = Array.isArray(state.drivers) ? state.drivers.filter(Boolean) : [];
   if (ownership === 'rent-in') {
-    drivers = drivers.filter(driver => driver && driver.affiliation === 'supplier');
+    drivers = drivers.filter(driver => {
+      if (!driver || driver.affiliation !== 'supplier') return false;
+      if (!normalizedVehicleSupplier) return !!driver.supplier;
+      return normalizeText(driver.supplier) === normalizedVehicleSupplier;
+    });
   } else if (ownership === 'owned') {
     drivers = drivers.filter(driver => driver && driver.affiliation !== 'supplier');
   }
@@ -719,8 +769,12 @@ function refreshTripDriverOptions(preservedDriver) {
 
 function getSupplierVehicles(supplierName) {
   if (!supplierName) return [];
+  const normalizedSupplier = normalizeText(supplierName);
   return state.fleet
-    .filter(item => item && item.ownership === 'rent-in' && item.supplier === supplierName)
+    .filter(item => {
+      if (!item || item.ownership !== 'rent-in') return false;
+      return normalizeText(item.supplier) === normalizedSupplier;
+    })
     .map(item => item.unitId)
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
@@ -817,14 +871,30 @@ function setupForms() {
       event.preventDefault();
       const formData = new FormData(fleetForm);
       const ownership = formData.get('ownership');
+      const unitId = String(formData.get('unitId') || '').trim();
+      if (!unitId) {
+        window.alert('Unit ID is required.');
+        return;
+      }
+      const normalizedUnitId = normalizeUnitId(unitId);
+      const duplicateIndex = state.fleet.findIndex((item, index) => {
+        if (!item || !item.unitId) return false;
+        if (normalizeUnitId(item.unitId) !== normalizedUnitId) return false;
+        if (isEditing('fleet') && index === editingContext.index) return false;
+        return true;
+      });
+      if (duplicateIndex !== -1) {
+        window.alert('A fleet unit with this ID already exists. Please use a unique Unit ID.');
+        return;
+      }
       const entry = {
-        unitId: formData.get('unitId'),
+        unitId,
         fleetType: formData.get('fleetType'),
         ownership,
         model: formData.get('model'),
         capacity: formData.get('capacity'),
         status: formData.get('status'),
-        supplier: ownership === 'rent-in' ? formData.get('supplier') : ''
+        supplier: ownership === 'rent-in' ? String(formData.get('supplier') || '').trim() : ''
       };
       if (isEditing('fleet')) {
         state.fleet.splice(editingContext.index, 1, entry);
@@ -851,7 +921,7 @@ function setupForms() {
       event.preventDefault();
       const formData = new FormData(driverForm);
       const affiliation = formData.get('affiliation');
-      const supplierName = affiliation === 'supplier' ? formData.get('supplier') : '';
+      const supplierName = affiliation === 'supplier' ? String(formData.get('supplier') || '').trim() : '';
       const entry = {
         name: formData.get('name'),
         license: formData.get('license'),
