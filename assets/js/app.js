@@ -13,6 +13,7 @@ const defaultState = {
 const state = loadState();
 const selectRefs = {};
 let tripIdInput;
+let tripOwnershipField;
 let fleetOwnershipSelect;
 let driverAffiliationSelect;
 const editingContext = { type: null, index: -1 };
@@ -40,6 +41,13 @@ const modalEditSubmitLabels = {
   supplierModal: 'Update Payment',
   supplierDirectoryModal: 'Update Supplier'
 };
+
+function findVehicleOwnership(vehicleId, fleetList = state.fleet) {
+  if (!vehicleId) return '';
+  const source = Array.isArray(fleetList) ? fleetList : [];
+  const match = source.find(item => item && item.unitId === vehicleId);
+  return match ? match.ownership || '' : '';
+}
 
 function loadState() {
   try {
@@ -81,6 +89,11 @@ function hydrateDerivedCollections(currentState) {
     if (invoice && invoice.customer) customers.add(invoice.customer);
   });
   currentState.customers = Array.from(customers).sort((a, b) => a.localeCompare(b));
+  (currentState.trips || []).forEach(trip => {
+    if (trip && !trip.unitOwnership) {
+      trip.unitOwnership = findVehicleOwnership(trip.vehicle, currentState.fleet);
+    }
+  });
   const highestTripNumber = (currentState.trips || [])
     .map(trip => {
       const match = String(trip.tripId || '').match(/(\d+)/);
@@ -248,6 +261,10 @@ function closeModal(id) {
     if (id === 'driverModal' && selectRefs.driverSupplier && driverAffiliationSelect) {
       toggleDependentSelect(selectRefs.driverSupplier, driverAffiliationSelect.value === 'supplier');
     }
+    if (id === 'tripModal') {
+      updateTripOwnershipDisplay('');
+      refreshTripDriverOptions();
+    }
     const type = getModalType(id);
     if (type && editingContext.type === type) {
       clearEditingContext();
@@ -269,6 +286,11 @@ function prepareModal(id) {
   }
   if (id === 'driverModal' && selectRefs.driverSupplier && driverAffiliationSelect) {
     toggleDependentSelect(selectRefs.driverSupplier, driverAffiliationSelect.value === 'supplier');
+  }
+  if (id === 'tripModal') {
+    const selectedVehicle = selectRefs.tripVehicle ? selectRefs.tripVehicle.value : '';
+    updateTripOwnershipDisplay(selectedVehicle);
+    refreshTripDriverOptions();
   }
 }
 
@@ -308,15 +330,17 @@ function updateAllSelectOptions() {
   const rentInVehicles = state.fleet.filter(item => item.ownership === 'rent-in').map(item => item.unitId).filter(Boolean);
   setSelectOptions(selectRefs.supplierPaymentVehicle, rentInVehicles, 'Select vehicle');
 
-  const driverNames = state.drivers.map(item => item.name).filter(Boolean);
-  setSelectOptions(selectRefs.tripDriver, driverNames, 'Select driver');
-
   const customers = [...state.customers].sort((a, b) => a.localeCompare(b));
   setSelectOptions(selectRefs.tripCustomer, customers, 'Select customer', { allowNew: true });
   setSelectOptions(selectRefs.invoiceCustomer, customers, 'Select customer', { allowNew: true });
 
   const tripReferences = state.trips.map(item => item.tripId).filter(Boolean);
   setSelectOptions(selectRefs.invoiceTrip, tripReferences, 'Select trip');
+  setSelectOptions(selectRefs.supplierPaymentTrip, tripReferences, 'Select trip');
+
+  refreshTripDriverOptions();
+  const activeVehicleId = selectRefs.tripVehicle ? selectRefs.tripVehicle.value : '';
+  updateTripOwnershipDisplay(activeVehicleId);
 }
 
 function setSelectOptions(select, values, placeholder, options = {}) {
@@ -352,6 +376,67 @@ function setSelectOptions(select, values, placeholder, options = {}) {
   }
 
   delete select.dataset.pendingValue;
+}
+
+function getVehicleOwnership(vehicleId) {
+  return findVehicleOwnership(vehicleId) || '';
+}
+
+function describeOwnership(value) {
+  if (!value) return '';
+  const normalized = String(value).toLowerCase();
+  if (normalized === 'rent-in' || normalized === 'rentin' || normalized === 'rent in') {
+    return 'Rent-In';
+  }
+  if (normalized === 'owned' || normalized === 'company owned' || normalized === 'company') {
+    return 'Company Owned';
+  }
+  return value;
+}
+
+function getTripOwnership(trip) {
+  if (!trip) return '';
+  if (trip.unitOwnership) {
+    return trip.unitOwnership;
+  }
+  return getVehicleOwnership(trip.vehicle);
+}
+
+function updateTripOwnershipDisplay(vehicleId, presetOwnership = '') {
+  if (!tripOwnershipField) return;
+  if (presetOwnership) {
+    tripOwnershipField.dataset.fallbackOwnership = presetOwnership;
+  } else if (!vehicleId) {
+    delete tripOwnershipField.dataset.fallbackOwnership;
+  }
+  const fallback = presetOwnership || tripOwnershipField.dataset.fallbackOwnership || '';
+  const ownership = getVehicleOwnership(vehicleId) || fallback;
+  tripOwnershipField.value = describeOwnership(ownership) || '';
+}
+
+function refreshTripDriverOptions(preservedDriver) {
+  const driverSelect = selectRefs.tripDriver;
+  const vehicleSelect = selectRefs.tripVehicle;
+  if (!driverSelect) return;
+  const vehicleId = vehicleSelect ? vehicleSelect.value : '';
+  const ownership = getVehicleOwnership(vehicleId);
+  let drivers = state.drivers;
+  if (ownership === 'rent-in') {
+    drivers = drivers.filter(driver => driver && driver.affiliation === 'supplier');
+  } else if (ownership === 'owned') {
+    drivers = drivers.filter(driver => driver && driver.affiliation !== 'supplier');
+  }
+  const driverNames = drivers.map(driver => driver && driver.name).filter(Boolean);
+  const desiredValue = preservedDriver || driverSelect.dataset.pendingValue || driverSelect.value;
+  if (desiredValue) {
+    driverSelect.dataset.pendingValue = desiredValue;
+  }
+  setSelectOptions(driverSelect, driverNames, 'Select driver');
+  if (vehicleId) {
+    driverSelect.disabled = driverNames.length === 0;
+  } else {
+    driverSelect.disabled = false;
+  }
 }
 
 function getSupplierNames() {
@@ -465,16 +550,25 @@ function setupForms() {
 
   if (tripForm) {
     tripIdInput = tripForm.querySelector('input[name="tripId"]');
+    tripOwnershipField = tripForm.querySelector('input[name="unitOwnership"]');
     selectRefs.tripCustomer = tripForm.querySelector('select[name="customer"]');
     selectRefs.tripVehicle = tripForm.querySelector('select[name="vehicle"]');
     selectRefs.tripDriver = tripForm.querySelector('select[name="driver"]');
     if (selectRefs.tripCustomer) {
       selectRefs.tripCustomer.addEventListener('change', () => handleAllowNewSelection(selectRefs.tripCustomer));
     }
+    if (selectRefs.tripVehicle) {
+      selectRefs.tripVehicle.addEventListener('change', () => {
+        const vehicleId = selectRefs.tripVehicle.value;
+        updateTripOwnershipDisplay(vehicleId);
+        refreshTripDriverOptions();
+      });
+    }
     tripForm.addEventListener('submit', event => {
       event.preventDefault();
       const formData = new FormData(tripForm);
       const customer = formData.get('customer');
+      const vehicle = formData.get('vehicle');
       const rentalCharges = Number(formData.get('rentalCharges'));
       const editingTrip = isEditing('trip');
       let tripId = formData.get('tripId');
@@ -484,15 +578,17 @@ function setupForms() {
       } else if (!tripId && state.trips[editingContext.index]) {
         tripId = state.trips[editingContext.index].tripId;
       }
+      const ownership = getVehicleOwnership(vehicle);
       const entry = {
         tripId,
         date: formData.get('date'),
         customer,
-        vehicle: formData.get('vehicle'),
+        vehicle,
         driver: formData.get('driver'),
         route: formData.get('route'),
         rentalCharges,
-        status: formData.get('status')
+        status: formData.get('status'),
+        unitOwnership: ownership
       };
       ensureCustomer(customer);
       if (editingTrip) {
@@ -542,6 +638,7 @@ function setupForms() {
   if (supplierForm) {
     selectRefs.supplierPaymentSupplier = supplierForm.querySelector('select[name="supplier"]');
     selectRefs.supplierPaymentVehicle = supplierForm.querySelector('select[name="vehicle"]');
+    selectRefs.supplierPaymentTrip = supplierForm.querySelector('select[name="trip"]');
     supplierForm.addEventListener('submit', event => {
       event.preventDefault();
       const formData = new FormData(supplierForm);
@@ -549,6 +646,7 @@ function setupForms() {
         reference: formData.get('reference'),
         supplier: formData.get('supplier'),
         vehicle: formData.get('vehicle'),
+        trip: formData.get('trip'),
         amount: Number(formData.get('amount')),
         dueDate: formData.get('dueDate'),
         status: formData.get('status'),
@@ -691,12 +789,14 @@ function renderTrips() {
   dom.tripTable.innerHTML = state.trips
     .map(item => {
       const index = state.trips.indexOf(item);
+      const ownershipLabel = describeOwnership(getTripOwnership(item)) || '-';
       return `<tr>
       <td data-label="Trip ID">${escapeHtml(item.tripId)}</td>
       <td data-label="Date">${formatDate(item.date)}</td>
       <td data-label="Customer">${escapeHtml(item.customer)}</td>
       <td data-label="Vehicle">${escapeHtml(item.vehicle)}</td>
       <td data-label="Driver">${escapeHtml(item.driver)}</td>
+      <td data-label="Unit Ownership">${escapeHtml(ownershipLabel)}</td>
       <td data-label="Route">${escapeHtml(item.route || '')}</td>
       <td data-label="Rental Charges">${formatCurrency(typeof item.rentalCharges === 'number' ? item.rentalCharges : Number(item.rentalCharges))}</td>
       <td data-label="Status"><span class="status-pill ${statusClassName(item.status)}">${escapeHtml(item.status)}</span></td>
@@ -762,6 +862,7 @@ function renderSuppliers() {
       <td data-label="Reference">${escapeHtml(item.reference)}</td>
       <td data-label="Supplier">${escapeHtml(item.supplier)}</td>
       <td data-label="Vehicle">${escapeHtml(item.vehicle || '-')}</td>
+      <td data-label="Trip Reference">${escapeHtml(item.trip || '-')}</td>
       <td data-label="Amount">${formatCurrency(item.amount)}</td>
       <td data-label="Due Date">${formatDate(item.dueDate)}</td>
       <td data-label="Status"><span class="status-pill ${statusClassName(item.status)}">${escapeHtml(item.status)}</span></td>
@@ -895,10 +996,12 @@ function populateTripForm(index) {
   }
   if (selectRefs.tripVehicle) {
     setSelectValue(selectRefs.tripVehicle, entry.vehicle);
+    updateTripOwnershipDisplay(entry.vehicle, entry.unitOwnership);
   }
   if (selectRefs.tripDriver) {
     setSelectValue(selectRefs.tripDriver, entry.driver);
   }
+  refreshTripDriverOptions(entry.driver);
   setFormValue(form, 'input[name="route"]', entry.route);
   const rentalValue = typeof entry.rentalCharges === 'number' ? entry.rentalCharges : Number(entry.rentalCharges) || entry.rentalCharges;
   setFormValue(form, 'input[name="rentalCharges"]', rentalValue);
@@ -934,6 +1037,9 @@ function populateSupplierPaymentForm(index) {
   }
   if (selectRefs.supplierPaymentVehicle) {
     setSelectValue(selectRefs.supplierPaymentVehicle, entry.vehicle);
+  }
+  if (selectRefs.supplierPaymentTrip) {
+    setSelectValue(selectRefs.supplierPaymentTrip, entry.trip);
   }
   setFormValue(form, 'input[name="amount"]', typeof entry.amount === 'number' ? entry.amount : Number(entry.amount) || entry.amount);
   setFormValue(form, 'input[name="dueDate"]', entry.dueDate);
@@ -1028,12 +1134,12 @@ function printInvoice(invoiceId) {
 
   const trip = state.trips.find(t => t.tripId === invoice.trip);
   const jsPdfNamespace = window.jspdf;
-  if (!jsPdfNamespace) {
+  const JsPDFConstructor = jsPdfNamespace && typeof jsPdfNamespace.jsPDF === 'function' ? jsPdfNamespace.jsPDF : window.jsPDF;
+  if (typeof JsPDFConstructor !== 'function') {
     alert('PDF library failed to load. Please check your internet connection and try again.');
     return;
   }
-  const { jsPDF } = jsPdfNamespace;
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const doc = new JsPDFConstructor({ unit: 'pt', format: 'a4' });
   const lineHeight = 22;
   let cursorY = 60;
 
