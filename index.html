@@ -22,6 +22,45 @@
   </header>
 
   <main>
+    <section class="dashboard" aria-label="Operational dashboard">
+      <div class="section-header">
+        <h2>Business Overview</h2>
+        <p class="section-subtitle">Monitor trip activity alongside customer and supplier payment health.</p>
+      </div>
+      <div class="dashboard-grid">
+        <article class="dashboard-card">
+          <h3>Total Trips</h3>
+          <p class="metric" id="statTotalTrips">0</p>
+          <p class="metric-sub" id="statTripBreakdown">Active: 0 • Completed: 0</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Customer Payments Received</h3>
+          <p class="metric" id="statCustomerReceivedAmount">$0.00</p>
+          <p class="metric-sub" id="statCustomerReceivedCount">0 invoices paid</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Customer Payments Pending</h3>
+          <p class="metric" id="statCustomerPendingAmount">$0.00</p>
+          <p class="metric-sub" id="statCustomerPendingCount">0 invoices open</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Supplier Payments Paid</h3>
+          <p class="metric" id="statSupplierPaidAmount">$0.00</p>
+          <p class="metric-sub" id="statSupplierPaidCount">0 payments sent</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Supplier Payments Pending</h3>
+          <p class="metric" id="statSupplierPendingAmount">$0.00</p>
+          <p class="metric-sub" id="statSupplierPendingCount">0 payments pending</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Net Cash Position</h3>
+          <p class="metric" id="statNetCashFlow">$0.00</p>
+          <p class="metric-sub" id="statNetOutstanding">Outstanding receivable impact: $0.00</p>
+        </article>
+      </div>
+    </section>
+
     <section class="cards-grid">
       <article class="card" data-modal="fleetModal">
         <h2>Fleet Inventory</h2>

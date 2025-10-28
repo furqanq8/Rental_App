@@ -131,6 +131,20 @@ const dom = {
   supplierFilter: document.getElementById('supplierFilter'),
   supplierReport: document.getElementById('supplierReport'),
   supplierDirectoryTable: document.querySelector('#supplierDirectoryTable tbody'),
+  dashboard: {
+    totalTrips: document.getElementById('statTotalTrips'),
+    tripBreakdown: document.getElementById('statTripBreakdown'),
+    customerReceivedAmount: document.getElementById('statCustomerReceivedAmount'),
+    customerReceivedCount: document.getElementById('statCustomerReceivedCount'),
+    customerPendingAmount: document.getElementById('statCustomerPendingAmount'),
+    customerPendingCount: document.getElementById('statCustomerPendingCount'),
+    supplierPaidAmount: document.getElementById('statSupplierPaidAmount'),
+    supplierPaidCount: document.getElementById('statSupplierPaidCount'),
+    supplierPendingAmount: document.getElementById('statSupplierPendingAmount'),
+    supplierPendingCount: document.getElementById('statSupplierPendingCount'),
+    netCashFlow: document.getElementById('statNetCashFlow'),
+    netOutstanding: document.getElementById('statNetOutstanding')
+  }
 };
 
 function initializeModalDefaults() {
@@ -265,6 +279,9 @@ function closeModal(id) {
       updateTripOwnershipDisplay('');
       refreshTripDriverOptions();
     }
+    if (id === 'supplierModal') {
+      updateSupplierPaymentDependencies();
+    }
     const type = getModalType(id);
     if (type && editingContext.type === type) {
       clearEditingContext();
@@ -327,8 +344,6 @@ function updateAllSelectOptions() {
 
   const vehicleIds = state.fleet.map(item => item.unitId).filter(Boolean);
   setSelectOptions(selectRefs.tripVehicle, vehicleIds, 'Select vehicle');
-  const rentInVehicles = state.fleet.filter(item => item.ownership === 'rent-in').map(item => item.unitId).filter(Boolean);
-  setSelectOptions(selectRefs.supplierPaymentVehicle, rentInVehicles, 'Select vehicle');
 
   const customers = [...state.customers].sort((a, b) => a.localeCompare(b));
   setSelectOptions(selectRefs.tripCustomer, customers, 'Select customer', { allowNew: true });
@@ -336,7 +351,8 @@ function updateAllSelectOptions() {
 
   const tripReferences = state.trips.map(item => item.tripId).filter(Boolean);
   setSelectOptions(selectRefs.invoiceTrip, tripReferences, 'Select trip');
-  setSelectOptions(selectRefs.supplierPaymentTrip, tripReferences, 'Select trip');
+
+  updateSupplierPaymentDependencies();
 
   refreshTripDriverOptions();
   const activeVehicleId = selectRefs.tripVehicle ? selectRefs.tripVehicle.value : '';
@@ -437,6 +453,59 @@ function refreshTripDriverOptions(preservedDriver) {
   } else {
     driverSelect.disabled = false;
   }
+}
+
+function getSupplierVehicles(supplierName) {
+  if (!supplierName) return [];
+  return state.fleet
+    .filter(item => item && item.ownership === 'rent-in' && item.supplier === supplierName)
+    .map(item => item.unitId)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function getSupplierTripsForPayment(supplierName, vehicleId) {
+  if (!supplierName) return [];
+  const vehicles = vehicleId ? [vehicleId] : getSupplierVehicles(supplierName);
+  const vehicleSet = new Set(vehicles);
+  return state.trips
+    .filter(trip => trip && vehicleSet.has(trip.vehicle))
+    .map(trip => trip.tripId)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function updateSupplierPaymentVehicleOptions(supplierName) {
+  const select = selectRefs.supplierPaymentVehicle;
+  if (!select) return;
+  const previous = select.dataset.pendingValue || select.value;
+  const vehicles = supplierName ? getSupplierVehicles(supplierName) : [];
+  const values = [...vehicles];
+  if (supplierName && previous && !values.includes(previous)) {
+    values.unshift(previous);
+  }
+  setSelectOptions(select, values, 'Select vehicle');
+  select.disabled = !supplierName || values.length === 0;
+}
+
+function updateSupplierPaymentTripOptions(supplierName, vehicleId) {
+  const select = selectRefs.supplierPaymentTrip;
+  if (!select) return;
+  const previous = select.dataset.pendingValue || select.value;
+  const trips = supplierName ? getSupplierTripsForPayment(supplierName, vehicleId) : [];
+  const values = [...trips];
+  if (supplierName && previous && !values.includes(previous)) {
+    values.unshift(previous);
+  }
+  setSelectOptions(select, values, 'Select trip');
+  select.disabled = !supplierName || values.length === 0;
+}
+
+function updateSupplierPaymentDependencies() {
+  const supplier = selectRefs.supplierPaymentSupplier ? selectRefs.supplierPaymentSupplier.value : '';
+  updateSupplierPaymentVehicleOptions(supplier);
+  const vehicleValue = selectRefs.supplierPaymentVehicle ? selectRefs.supplierPaymentVehicle.value : '';
+  updateSupplierPaymentTripOptions(supplier, vehicleValue);
 }
 
 function getSupplierNames() {
@@ -639,14 +708,34 @@ function setupForms() {
     selectRefs.supplierPaymentSupplier = supplierForm.querySelector('select[name="supplier"]');
     selectRefs.supplierPaymentVehicle = supplierForm.querySelector('select[name="vehicle"]');
     selectRefs.supplierPaymentTrip = supplierForm.querySelector('select[name="trip"]');
+    if (selectRefs.supplierPaymentSupplier) {
+      selectRefs.supplierPaymentSupplier.addEventListener('change', () => {
+        if (selectRefs.supplierPaymentVehicle) {
+          selectRefs.supplierPaymentVehicle.dataset.pendingValue = '';
+        }
+        if (selectRefs.supplierPaymentTrip) {
+          selectRefs.supplierPaymentTrip.dataset.pendingValue = '';
+        }
+        updateSupplierPaymentDependencies();
+      });
+    }
+    if (selectRefs.supplierPaymentVehicle) {
+      selectRefs.supplierPaymentVehicle.addEventListener('change', () => {
+        if (selectRefs.supplierPaymentTrip) {
+          selectRefs.supplierPaymentTrip.dataset.pendingValue = '';
+        }
+        const supplier = selectRefs.supplierPaymentSupplier ? selectRefs.supplierPaymentSupplier.value : '';
+        updateSupplierPaymentTripOptions(supplier, selectRefs.supplierPaymentVehicle.value);
+      });
+    }
     supplierForm.addEventListener('submit', event => {
       event.preventDefault();
       const formData = new FormData(supplierForm);
       const entry = {
         reference: formData.get('reference'),
         supplier: formData.get('supplier'),
-        vehicle: formData.get('vehicle'),
-        trip: formData.get('trip'),
+        vehicle: formData.get('vehicle') || '',
+        trip: formData.get('trip') || '',
         amount: Number(formData.get('amount')),
         dueDate: formData.get('dueDate'),
         status: formData.get('status'),
@@ -813,6 +902,8 @@ function renderTrips() {
       }
     });
   });
+
+  updateDashboard();
 }
 
 function renderInvoices() {
@@ -850,6 +941,7 @@ function renderInvoices() {
   });
 
   dom.invoiceReport.innerHTML = buildInvoiceReport();
+  updateDashboard();
 }
 
 function renderSuppliers() {
@@ -881,6 +973,57 @@ function renderSuppliers() {
   });
 
   dom.supplierReport.innerHTML = buildSupplierReport();
+  updateDashboard();
+}
+
+function updateDashboard() {
+  if (!dom.dashboard) return;
+  const {
+    totalTrips,
+    tripBreakdown,
+    customerReceivedAmount,
+    customerReceivedCount,
+    customerPendingAmount,
+    customerPendingCount,
+    supplierPaidAmount,
+    supplierPaidCount,
+    supplierPendingAmount,
+    supplierPendingCount,
+    netCashFlow,
+    netOutstanding
+  } = dom.dashboard;
+
+  const totalTripsCount = state.trips.length;
+  const completedTrips = state.trips.filter(trip => trip && String(trip.status).toLowerCase() === 'completed').length;
+  const activeTrips = Math.max(totalTripsCount - completedTrips, 0);
+
+  setTextContent(totalTrips, String(totalTripsCount));
+  setTextContent(tripBreakdown, `Active: ${activeTrips} • Completed: ${completedTrips}`);
+
+  const invoicesPaid = state.invoices.filter(invoice => invoice && String(invoice.status).toLowerCase() === 'paid');
+  const invoicesPending = state.invoices.filter(invoice => invoice && String(invoice.status).toLowerCase() !== 'paid');
+  const suppliersPaid = state.suppliers.filter(payment => payment && String(payment.status).toLowerCase() === 'paid');
+  const suppliersPending = state.suppliers.filter(payment => payment && String(payment.status).toLowerCase() !== 'paid');
+
+  const paidInAmount = invoicesPaid.reduce((sum, invoice) => sum + numericAmount(invoice.amount), 0);
+  const pendingInAmount = invoicesPending.reduce((sum, invoice) => sum + numericAmount(invoice.amount), 0);
+  const paidOutAmount = suppliersPaid.reduce((sum, payment) => sum + numericAmount(payment.amount), 0);
+  const pendingOutAmount = suppliersPending.reduce((sum, payment) => sum + numericAmount(payment.amount), 0);
+
+  setTextContent(customerReceivedAmount, formatCurrency(paidInAmount));
+  setTextContent(customerReceivedCount, `${invoicesPaid.length} invoice${invoicesPaid.length === 1 ? '' : 's'} paid`);
+  setTextContent(customerPendingAmount, formatCurrency(pendingInAmount));
+  setTextContent(customerPendingCount, `${invoicesPending.length} invoice${invoicesPending.length === 1 ? '' : 's'} open`);
+
+  setTextContent(supplierPaidAmount, formatCurrency(paidOutAmount));
+  setTextContent(supplierPaidCount, `${suppliersPaid.length} payment${suppliersPaid.length === 1 ? '' : 's'} sent`);
+  setTextContent(supplierPendingAmount, formatCurrency(pendingOutAmount));
+  setTextContent(supplierPendingCount, `${suppliersPending.length} payment${suppliersPending.length === 1 ? '' : 's'} pending`);
+
+  const netCash = paidInAmount - paidOutAmount;
+  const outstandingImpact = pendingInAmount - pendingOutAmount;
+  setTextContent(netCashFlow, formatCurrency(netCash));
+  setTextContent(netOutstanding, `Outstanding receivable impact: ${formatCurrency(outstandingImpact)}`);
 }
 
 function openFleetEditor(index) {
@@ -937,6 +1080,11 @@ function setFormValue(form, selector, value) {
   if (field) {
     field.value = value ?? '';
   }
+}
+
+function setTextContent(element, value) {
+  if (!element) return;
+  element.textContent = value;
 }
 
 function setSelectValue(select, value) {
@@ -1036,11 +1184,12 @@ function populateSupplierPaymentForm(index) {
     setSelectValue(selectRefs.supplierPaymentSupplier, entry.supplier);
   }
   if (selectRefs.supplierPaymentVehicle) {
-    setSelectValue(selectRefs.supplierPaymentVehicle, entry.vehicle);
+    selectRefs.supplierPaymentVehicle.dataset.pendingValue = entry.vehicle || '';
   }
   if (selectRefs.supplierPaymentTrip) {
-    setSelectValue(selectRefs.supplierPaymentTrip, entry.trip);
+    selectRefs.supplierPaymentTrip.dataset.pendingValue = entry.trip || '';
   }
+  updateSupplierPaymentDependencies();
   setFormValue(form, 'input[name="amount"]', typeof entry.amount === 'number' ? entry.amount : Number(entry.amount) || entry.amount);
   setFormValue(form, 'input[name="dueDate"]', entry.dueDate);
   setFormValue(form, 'select[name="status"]', entry.status);
@@ -1112,6 +1261,11 @@ function aggregateByStatus(items) {
   }, {});
 }
 
+function numericAmount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
 function exportWorkbook() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.fleet), 'Fleet');
@@ -1135,73 +1289,180 @@ function printInvoice(invoiceId) {
   const trip = state.trips.find(t => t.tripId === invoice.trip);
   const jsPdfNamespace = window.jspdf;
   const JsPDFConstructor = jsPdfNamespace && typeof jsPdfNamespace.jsPDF === 'function' ? jsPdfNamespace.jsPDF : window.jsPDF;
-  if (typeof JsPDFConstructor !== 'function') {
-    alert('PDF library failed to load. Please check your internet connection and try again.');
-    return;
-  }
-  const doc = new JsPDFConstructor({ unit: 'pt', format: 'a4' });
-  const lineHeight = 22;
-  let cursorY = 60;
+  if (typeof JsPDFConstructor === 'function') {
+    const doc = new JsPDFConstructor({ unit: 'pt', format: 'a4' });
+    const lineHeight = 22;
+    let cursorY = 60;
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(20);
-  doc.text('Azmat Rental Fleet Management', 40, cursorY);
-  cursorY += lineHeight * 1.5;
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(12);
-  doc.text(`Invoice #: ${invoice.invoice}`, 40, cursorY);
-  cursorY += lineHeight;
-  doc.text(`Customer: ${invoice.customer}`, 40, cursorY);
-  cursorY += lineHeight;
-  doc.text(`Trip Reference: ${invoice.trip || 'N/A'}`, 40, cursorY);
-  cursorY += lineHeight;
-  doc.text(`Due Date: ${formatDate(invoice.dueDate)}`, 40, cursorY);
-  cursorY += lineHeight;
-  doc.text(`Status: ${invoice.status}`, 40, cursorY);
-  cursorY += lineHeight * 1.5;
-
-  doc.setFont('helvetica', 'bold');
-  doc.text('Invoice Breakdown', 40, cursorY);
-  cursorY += lineHeight;
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Amount Due: ${formatCurrency(invoice.amount)}`, 40, cursorY);
-  cursorY += lineHeight;
-  if (invoice.notes) {
-    const textLines = doc.splitTextToSize(`Notes: ${invoice.notes}`, 500);
-    doc.text(textLines, 40, cursorY);
-    cursorY += lineHeight * textLines.length;
-  }
-
-  if (trip) {
-    const tripChargeValue = typeof trip.rentalCharges === 'number' ? trip.rentalCharges : Number(trip.rentalCharges);
-    if (!Number.isNaN(tripChargeValue)) {
-      doc.text(`Trip Rental Charges: ${formatCurrency(tripChargeValue)}`, 40, cursorY);
-      cursorY += lineHeight;
-    }
-    cursorY += lineHeight;
     doc.setFont('helvetica', 'bold');
-    doc.text('Trip Details', 40, cursorY);
+    doc.setFontSize(20);
+    doc.text('Azmat Rental Fleet Management', 40, cursorY);
+    cursorY += lineHeight * 1.5;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(12);
+    doc.text(`Invoice #: ${invoice.invoice}`, 40, cursorY);
+    cursorY += lineHeight;
+    doc.text(`Customer: ${invoice.customer}`, 40, cursorY);
+    cursorY += lineHeight;
+    doc.text(`Trip Reference: ${invoice.trip || 'N/A'}`, 40, cursorY);
+    cursorY += lineHeight;
+    doc.text(`Due Date: ${formatDate(invoice.dueDate)}`, 40, cursorY);
+    cursorY += lineHeight;
+    doc.text(`Status: ${invoice.status}`, 40, cursorY);
+    cursorY += lineHeight * 1.5;
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('Invoice Breakdown', 40, cursorY);
     cursorY += lineHeight;
     doc.setFont('helvetica', 'normal');
-    doc.text(`Trip Date: ${formatDate(trip.date)}`, 40, cursorY);
+    const invoiceAmountValue = numericAmount(invoice.amount);
+    doc.text(`Amount Due: ${formatCurrency(invoiceAmountValue)}`, 40, cursorY);
     cursorY += lineHeight;
-    doc.text(`Vehicle: ${trip.vehicle}`, 40, cursorY);
-    cursorY += lineHeight;
-    doc.text(`Driver: ${trip.driver}`, 40, cursorY);
-    cursorY += lineHeight;
-    if (trip.route) {
-      const routeLines = doc.splitTextToSize(`Route: ${trip.route}`, 500);
-      doc.text(routeLines, 40, cursorY);
-      cursorY += lineHeight * routeLines.length;
+    if (invoice.notes) {
+      const textLines = doc.splitTextToSize(`Notes: ${invoice.notes}`, 500);
+      doc.text(textLines, 40, cursorY);
+      cursorY += lineHeight * textLines.length;
     }
+
+    if (trip) {
+      const tripChargeValue = numericAmount(trip.rentalCharges);
+      if (tripChargeValue > 0) {
+        doc.text(`Trip Rental Charges: ${formatCurrency(tripChargeValue)}`, 40, cursorY);
+        cursorY += lineHeight;
+      }
+      cursorY += lineHeight;
+      doc.setFont('helvetica', 'bold');
+      doc.text('Trip Details', 40, cursorY);
+      cursorY += lineHeight;
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Trip Date: ${formatDate(trip.date)}`, 40, cursorY);
+      cursorY += lineHeight;
+      doc.text(`Vehicle: ${trip.vehicle}`, 40, cursorY);
+      cursorY += lineHeight;
+      doc.text(`Driver: ${trip.driver}`, 40, cursorY);
+      cursorY += lineHeight;
+      if (trip.route) {
+        const routeLines = doc.splitTextToSize(`Route: ${trip.route}`, 500);
+        doc.text(routeLines, 40, cursorY);
+        cursorY += lineHeight * routeLines.length;
+      }
+    }
+
+    cursorY += lineHeight * 1.5;
+    doc.setFont('helvetica', 'italic');
+    doc.text('Thank you for choosing Azmat for your transportation needs.', 40, cursorY);
+
+    doc.save(`Azmat-Invoice-${invoice.invoice}.pdf`);
+    return;
   }
 
-  cursorY += lineHeight * 1.5;
-  doc.setFont('helvetica', 'italic');
-  doc.text('Thank you for choosing Azmat for your transportation needs.', 40, cursorY);
+  openInvoicePrintPreview(invoice, trip);
+}
 
-  doc.save(`Azmat-Invoice-${invoice.invoice}.pdf`);
+function openInvoicePrintPreview(invoice, trip) {
+  const printWindow = window.open('', '_blank', 'width=900,height=700');
+  if (!printWindow) {
+    alert('Unable to open the print preview. Please allow pop-ups for this site.');
+    return;
+  }
+  const markup = buildInvoicePrintMarkup(invoice, trip);
+  printWindow.document.write(markup);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
+function buildInvoicePrintMarkup(invoice, trip) {
+  const invoiceNumber = escapeHtml(invoice.invoice || '');
+  const customerName = escapeHtml(invoice.customer || '');
+  const dueDate = escapeHtml(formatDate(invoice.dueDate));
+  const status = escapeHtml(invoice.status || '');
+  const tripReference = invoice.trip || (trip ? trip.tripId : '');
+  const safeTripReference = tripReference ? escapeHtml(tripReference) : '—';
+  const invoiceAmountValue = numericAmount(invoice.amount);
+  const invoiceAmount = escapeHtml(formatCurrency(invoiceAmountValue));
+  const ownershipLabel = trip ? describeOwnership(getTripOwnership(trip)) : '';
+  const ownershipMarkup = ownershipLabel ? `<p><strong>Unit Ownership</strong><br>${escapeHtml(ownershipLabel)}</p>` : '';
+  const rentalChargeValue = trip ? numericAmount(trip.rentalCharges) : 0;
+  const rentalMarkup = trip && rentalChargeValue > 0
+    ? `<p><strong>Trip Rental Charges</strong><br>${escapeHtml(formatCurrency(rentalChargeValue))}</p>`
+    : '';
+  const routeMarkup = trip && trip.route
+    ? `<p><strong>Route</strong><br>${escapeHtml(trip.route)}</p>`
+    : '';
+  const notesMarkup = invoice.notes
+    ? `<section class="notes"><h2>Notes</h2><p>${escapeHtml(invoice.notes).replace(/\n/g, '<br>')}</p></section>`
+    : '';
+  const tripDetails = trip
+    ? `<section class="details">
+        <h2>Trip Details</h2>
+        <p><strong>Date</strong><br>${escapeHtml(formatDate(trip.date))}</p>
+        <p><strong>Vehicle</strong><br>${escapeHtml(trip.vehicle || '—')}</p>
+        <p><strong>Driver</strong><br>${escapeHtml(trip.driver || '—')}</p>
+        ${ownershipMarkup}
+        ${rentalMarkup}
+        ${routeMarkup}
+      </section>`
+    : '';
+  const generatedOn = escapeHtml(new Date().toLocaleString());
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Invoice ${invoiceNumber}</title>
+  <style>
+    body { font-family: 'Inter', Arial, sans-serif; margin: 0; padding: 0; color: #1f2933; background: #f2f5fb; }
+    .invoice { max-width: 720px; margin: 0 auto; padding: 40px 32px; background: #ffffff; }
+    header { text-align: center; margin-bottom: 32px; }
+    header h1 { margin-bottom: 8px; font-size: 26px; }
+    .summary { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 32px; }
+    .summary > div { flex: 1 1 260px; background: #f4f7ff; border-radius: 12px; padding: 18px; }
+    .summary h2 { margin-bottom: 12px; font-size: 16px; color: #0d47a1; }
+    .summary p { margin: 0 0 10px; }
+    .details { background: #f9fafc; border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+    .details h2 { margin-bottom: 12px; font-size: 16px; color: #0d47a1; }
+    .details p { margin: 0 0 10px; }
+    .notes { background: #fff9e6; border-radius: 12px; padding: 18px; margin-top: 16px; }
+    .notes h2 { margin-bottom: 10px; font-size: 16px; color: #b7791f; }
+    footer { margin-top: 32px; text-align: center; color: #5f6c7b; font-size: 0.95rem; }
+    strong { color: #0d47a1; }
+    @media print {
+      body { background: #ffffff; }
+      .invoice { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="invoice">
+    <header>
+      <h1>Azmat Rental Fleet Management</h1>
+      <p class="subtitle">Customer Invoice Summary</p>
+    </header>
+    <section class="summary">
+      <div>
+        <h2>Invoice Details</h2>
+        <p><strong>Invoice #</strong><br>${invoiceNumber || '—'}</p>
+        <p><strong>Customer</strong><br>${customerName || '—'}</p>
+        <p><strong>Due Date</strong><br>${dueDate || '—'}</p>
+        <p><strong>Status</strong><br>${status || '—'}</p>
+      </div>
+      <div>
+        <h2>Financial Summary</h2>
+        <p><strong>Trip Reference</strong><br>${safeTripReference}</p>
+        <p><strong>Invoice Amount</strong><br>${invoiceAmount}</p>
+      </div>
+    </section>
+    ${tripDetails}
+    ${notesMarkup}
+    <footer>
+      <p>Generated on ${generatedOn}</p>
+      <p>Thank you for choosing Azmat for your transportation needs.</p>
+    </footer>
+  </div>
+</body>
+</html>`;
 }
 
 function formatCurrency(value) {
