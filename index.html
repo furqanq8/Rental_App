@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Azmat Rental Fleet Management</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha512-0JXv0F8Uai0oZX6mE6xPD58Ll35H0TADaBrZEcD3xKhsR4HIX66vepQP9enZ5bY3bT5pGud2wE8V0QF0svJrFw==" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
+  <script src="assets/js/app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Azmat Rental Fleet Management</h1>
+      <p class="subtitle">Streamline fleet, driver, trip, and finance workflows in one place.</p>
+    </div>
+    <button id="exportExcel" class="btn primary">Export All Data</button>
+  </header>
+
+  <main>
+    <section class="dashboard" aria-label="Operational dashboard">
+      <div class="section-header">
+        <div class="section-heading">
+          <h2>Business Overview</h2>
+          <p class="section-subtitle">Monitor trip activity alongside customer and supplier payment health.</p>
+        </div>
+        <div class="dashboard-controls" aria-label="Dashboard performance range">
+          <div class="dashboard-range-buttons" id="dashboardRangeButtons" role="group" aria-label="Select performance range">
+            <button type="button" class="range-button" data-range="thisMonth">This Month</button>
+            <button type="button" class="range-button" data-range="lastMonth">Last Month</button>
+            <button type="button" class="range-button" data-range="custom">Custom</button>
+          </div>
+          <div class="dashboard-custom-range" id="dashboardCustomRange">
+            <label>
+              From
+              <input type="date" id="dashboardRangeStart" />
+            </label>
+            <label>
+              To
+              <input type="date" id="dashboardRangeEnd" />
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="dashboard-grid">
+        <article class="dashboard-card">
+          <h3>Total Trips</h3>
+          <p class="metric" id="statTotalTrips">0</p>
+          <p class="metric-sub" id="statTripBreakdown">Active: 0 • Completed: 0</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Customer Payments Received</h3>
+          <p class="metric" id="statCustomerReceivedAmount">$0.00</p>
+          <p class="metric-sub" id="statCustomerReceivedCount">0 invoices paid</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Customer Payments Pending</h3>
+          <p class="metric" id="statCustomerPendingAmount">$0.00</p>
+          <p class="metric-sub" id="statCustomerPendingCount">0 invoices open</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Supplier Payments Paid</h3>
+          <p class="metric" id="statSupplierPaidAmount">$0.00</p>
+          <p class="metric-sub" id="statSupplierPaidCount">0 payments sent</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Supplier Payments Pending</h3>
+          <p class="metric" id="statSupplierPendingAmount">$0.00</p>
+          <p class="metric-sub" id="statSupplierPendingCount">0 payments pending</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>Net Cash Position</h3>
+          <p class="metric" id="statNetCashFlow">$0.00</p>
+          <p class="metric-sub" id="statNetOutstanding">Outstanding receivable impact: $0.00</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="cards-grid">
+      <article class="card" data-modal="fleetModal">
+        <h2>Fleet Inventory</h2>
+        <p>Track company owned and rent-in vehicles from partner suppliers.</p>
+        <button class="btn secondary">Add Fleet</button>
+      </article>
+      <article class="card" data-modal="supplierDirectoryModal">
+        <h2>Supplier Directory</h2>
+        <p>Maintain details of partner suppliers for rent-in operations.</p>
+        <button class="btn secondary">Add Supplier</button>
+      </article>
+      <article class="card" data-modal="driverModal">
+        <h2>Drivers</h2>
+        <p>Maintain driver roster and availability.</p>
+        <button class="btn secondary">Add Driver</button>
+      </article>
+      <article class="card" data-modal="tripModal">
+        <h2>Trips</h2>
+        <p>Record trip itineraries, assignments, and vehicle usage.</p>
+        <button class="btn secondary">Add Trip</button>
+      </article>
+      <article class="card" data-modal="invoiceModal">
+        <h2>Customer Invoices</h2>
+        <p>Invoice customers for completed trips and services.</p>
+        <button class="btn secondary">Create Invoice</button>
+      </article>
+      <article class="card" data-modal="supplierModal">
+        <h2>Supplier Payments</h2>
+        <p>Monitor rental payments owed to partner suppliers.</p>
+        <button class="btn secondary">Record Payment</button>
+      </article>
+    </section>
+
+    <section class="data-section">
+      <div class="section-header">
+        <h2>Fleet Registry</h2>
+        <div class="filters">
+          <label for="fleetFilter">Show:</label>
+          <select id="fleetFilter">
+            <option value="all">All Units</option>
+            <option value="owned">Company Owned</option>
+            <option value="rent-in">Rent-In</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table id="fleetTable">
+          <thead>
+            <tr>
+              <th>Unit ID</th>
+              <th>Fleet Type</th>
+              <th>Type</th>
+              <th>Make &amp; Model</th>
+              <th>Capacity</th>
+              <th>Status</th>
+              <th>Supplier</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <div class="section-header">
+        <h2>Driver Directory</h2>
+      </div>
+      <div class="table-wrapper">
+        <table id="driverTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>License No.</th>
+              <th>Phone</th>
+              <th>Availability</th>
+              <th>Affiliation</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <div class="section-header">
+        <h2>Supplier Directory</h2>
+      </div>
+      <div class="table-wrapper">
+        <table id="supplierDirectoryTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Contact</th>
+              <th>Phone</th>
+              <th>Email</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <div class="section-header">
+        <h2>Trip Log</h2>
+      </div>
+      <div class="table-wrapper">
+        <table id="tripTable">
+          <thead>
+            <tr>
+              <th>Trip ID</th>
+              <th>Date</th>
+              <th>Customer</th>
+              <th>Vehicle</th>
+              <th>Driver</th>
+              <th>Unit Ownership</th>
+              <th>Route</th>
+              <th>Rental Charges</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="data-section">
+      <div class="section-header">
+        <h2>Customer Invoice Center</h2>
+        <div class="filters">
+          <label for="invoiceFilter">Status:</label>
+          <select id="invoiceFilter">
+            <option value="all">All</option>
+            <option value="Pending">Pending</option>
+            <option value="Partial">Partial</option>
+            <option value="Paid">Paid</option>
+            <option value="Overdue">Overdue</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table id="invoiceTable">
+          <thead>
+            <tr>
+              <th>Invoice #</th>
+              <th>Customer</th>
+              <th>Trip</th>
+              <th>Amount</th>
+              <th>Due Date</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="report" id="invoiceReport"></div>
+    </section>
+
+    <section class="data-section">
+      <div class="section-header">
+        <h2>Supplier Payment Tracker</h2>
+        <div class="filters">
+          <label for="supplierFilter">Status:</label>
+          <select id="supplierFilter">
+            <option value="all">All</option>
+            <option value="Pending">Pending</option>
+            <option value="Scheduled">Scheduled</option>
+            <option value="Paid">Paid</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table id="supplierTable">
+          <thead>
+            <tr>
+              <th>Reference</th>
+              <th>Supplier</th>
+              <th>Vehicle</th>
+              <th>Trip Reference</th>
+              <th>Amount</th>
+              <th>Due Date</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="report" id="supplierReport"></div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>&copy; <span id="year"></span> Azmat Fleet Solutions. All rights reserved.</p>
+  </footer>
+
+  <!-- Fleet Modal -->
+  <div class="modal" id="fleetModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3>Add Fleet Unit</h3>
+        <button class="close" data-close>&times;</button>
+      </header>
+      <form id="fleetForm" class="form-grid">
+        <label>Unit ID
+          <input type="text" name="unitId" required />
+        </label>
+        <label>Fleet Type
+          <select name="fleetType" required>
+            <option value="">Select fleet type</option>
+            <option value="Truck">Truck</option>
+            <option value="Bus">Bus</option>
+            <option value="Van">Van</option>
+            <option value="SUV">SUV</option>
+            <option value="Car">Car</option>
+            <option value="Trailer">Trailer</option>
+            <option value="Equipment">Equipment</option>
+          </select>
+        </label>
+        <label>Ownership
+          <select name="ownership" required>
+            <option value="owned">Company Owned</option>
+            <option value="rent-in">Rent-In</option>
+          </select>
+        </label>
+        <label>Make &amp; Model
+          <input type="text" name="model" required />
+        </label>
+        <label>Capacity
+          <input type="text" name="capacity" placeholder="Seats / Tons" />
+        </label>
+        <label>Status
+          <select name="status" required>
+            <option value="Available">Available</option>
+            <option value="In Service">In Service</option>
+            <option value="Under Maintenance">Under Maintenance</option>
+          </select>
+        </label>
+        <label>Supplier (for rent-in)
+          <select name="supplier" disabled>
+            <option value="">Select supplier</option>
+          </select>
+        </label>
+        <button type="submit" class="btn primary">Save Unit</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Driver Modal -->
+  <div class="modal" id="driverModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3>Add Driver</h3>
+        <button class="close" data-close>&times;</button>
+      </header>
+      <form id="driverForm" class="form-grid">
+        <label>Name
+          <input type="text" name="name" required />
+        </label>
+        <label>License Number
+          <input type="text" name="license" required />
+        </label>
+        <label>Phone
+          <input type="tel" name="phone" required />
+        </label>
+        <label>Availability
+          <select name="availability" required>
+            <option value="Available">Available</option>
+            <option value="On Trip">On Trip</option>
+            <option value="Leave">Leave</option>
+          </select>
+        </label>
+        <label>Affiliation
+          <select name="affiliation" required>
+            <option value="company">Company</option>
+            <option value="supplier">Supplier</option>
+          </select>
+        </label>
+        <label>Supplier
+          <select name="supplier" disabled>
+            <option value="">Select supplier</option>
+          </select>
+        </label>
+        <button type="submit" class="btn primary">Save Driver</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Trip Modal -->
+  <div class="modal" id="tripModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3>Log Trip</h3>
+        <button class="close" data-close>&times;</button>
+      </header>
+      <form id="tripForm" class="form-grid">
+        <label>Trip ID
+          <input type="text" name="tripId" readonly />
+        </label>
+        <label>Date
+          <input type="date" name="date" required />
+        </label>
+        <label>Customer
+          <select name="customer" data-allow-new="true" data-label="customer" required>
+            <option value="">Select customer</option>
+          </select>
+        </label>
+        <label>Vehicle ID
+          <select name="vehicle" required>
+            <option value="">Select vehicle</option>
+          </select>
+        </label>
+        <label>Unit Ownership
+          <input type="text" name="unitOwnership" readonly />
+        </label>
+        <label>Driver Name
+          <select name="driver" required>
+            <option value="">Select driver</option>
+          </select>
+        </label>
+        <label>Route / Purpose
+          <input type="text" name="route" />
+        </label>
+        <label>Rental Charges
+          <input type="number" name="rentalCharges" min="0" step="0.01" required />
+        </label>
+        <label>Status
+          <select name="status" required>
+            <option value="Scheduled">Scheduled</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Completed">Completed</option>
+          </select>
+        </label>
+        <button type="submit" class="btn primary">Save Trip</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Invoice Modal -->
+  <div class="modal" id="invoiceModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3>Create Customer Invoice</h3>
+        <button class="close" data-close>&times;</button>
+      </header>
+      <form id="invoiceForm" class="form-grid">
+        <label>Invoice Number
+          <input type="text" name="invoice" required />
+        </label>
+        <label>Customer
+          <select name="customer" data-allow-new="true" data-label="customer" required>
+            <option value="">Select customer</option>
+          </select>
+        </label>
+        <label>Trip Reference
+          <select name="trip">
+            <option value="">Select trip</option>
+          </select>
+        </label>
+        <label>Amount
+          <input type="number" name="amount" min="0" step="0.01" required />
+        </label>
+        <label>Due Date
+          <input type="date" name="dueDate" required />
+        </label>
+        <label>Status
+          <select name="status" required>
+            <option value="Pending">Pending</option>
+            <option value="Partial">Partial</option>
+            <option value="Paid">Paid</option>
+            <option value="Overdue">Overdue</option>
+          </select>
+        </label>
+        <label>Notes
+          <textarea name="notes" rows="3" placeholder="Invoice notes or services"></textarea>
+        </label>
+        <button type="submit" class="btn primary">Save Invoice</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Supplier Modal -->
+  <div class="modal" id="supplierModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3>Record Supplier Payment</h3>
+        <button class="close" data-close>&times;</button>
+      </header>
+      <form id="supplierForm" class="form-grid">
+        <label>Reference
+          <input type="text" name="reference" required />
+        </label>
+        <label>Supplier Name
+          <select name="supplier" required>
+            <option value="">Select supplier</option>
+          </select>
+        </label>
+        <label>Vehicle ID
+          <select name="vehicle">
+            <option value="">Select vehicle</option>
+          </select>
+        </label>
+        <label>Trip Reference
+          <select name="trip">
+            <option value="">Select trip</option>
+          </select>
+        </label>
+        <label>Amount
+          <input type="number" name="amount" min="0" step="0.01" required />
+        </label>
+        <label>Due Date
+          <input type="date" name="dueDate" required />
+        </label>
+        <label>Status
+          <select name="status" required>
+            <option value="Pending">Pending</option>
+            <option value="Scheduled">Scheduled</option>
+            <option value="Paid">Paid</option>
+          </select>
+        </label>
+        <label>Notes
+          <textarea name="notes" rows="3" placeholder="Payment details"></textarea>
+        </label>
+        <button type="submit" class="btn primary">Save Payment</button>
+      </form>
+    </div>
+  </div>
+
+
+<div class="modal" id="supplierDirectoryModal" aria-hidden="true">
+  <div class="modal-content">
+    <header>
+      <h3>Add Supplier</h3>
+      <button class="close" data-close>&times;</button>
+    </header>
+    <form id="supplierDirectoryForm" class="form-grid">
+      <label>Supplier Name
+        <input type="text" name="name" required />
+      </label>
+      <label>Contact Person
+        <input type="text" name="contact" />
+      </label>
+      <label>Phone
+        <input type="tel" name="phone" />
+      </label>
+      <label>Email
+        <input type="email" name="email" />
+      </label>
+      <button type="submit" class="btn primary">Save Supplier</button>
+    </form>
+  </div>
+</div>
+
+</body>
+</html>
