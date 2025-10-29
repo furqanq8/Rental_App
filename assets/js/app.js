@@ -1,32 +1,3 @@
-const authStorageKey = 'azmat-auth-token';
-const themeStorageKey = 'azmat-theme-preference';
-let authToken = '';
-let authUser = null;
-
-const bodyElement = document.body;
-
-try {
-  const storedToken = localStorage.getItem(authStorageKey);
-  if (storedToken) {
-    authToken = storedToken;
-  }
-} catch (error) {
-  console.warn('Unable to restore authentication token from storage.', error);
-}
-
-try {
-  const storedTheme = localStorage.getItem(themeStorageKey);
-  if (storedTheme === 'dark' && bodyElement) {
-    bodyElement.classList.add('dark-theme');
-  }
-} catch (error) {
-  console.warn('Unable to restore theme preference from storage.', error);
-}
-
-if (!authToken && bodyElement) {
-  bodyElement.classList.add('app-locked');
-}
-
 const apiBase = (window.__AZMAT_API_BASE__ || document.documentElement.getAttribute('data-api-base') || '').replace(/\/$/, '');
 const storageKey = 'azmat-fleet-state-v3';
 const defaultState = {
@@ -53,8 +24,6 @@ let tripIdInput;
 let tripOwnershipField;
 let fleetOwnershipSelect;
 let driverAffiliationSelect;
-let bootstrapPromise = null;
-let authSubmitDefaultLabel = 'Sign In';
 const editingContext = { type: null, index: -1 };
 const modalTypeMap = {
   fleetModal: 'fleet',
@@ -80,108 +49,6 @@ const modalEditSubmitLabels = {
   supplierModal: 'Update Payment',
   supplierDirectoryModal: 'Update Supplier'
 };
-
-const syncBannerElement = document.getElementById('syncStatusBanner');
-const syncBannerMessage = document.getElementById('syncStatusMessage');
-let hideSyncBannerTimer = null;
-let currentSyncStatus = 'idle';
-
-function describeSyncError(error) {
-  if (!error) {
-    return '';
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  if (error.message) {
-    return error.message;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch (err) {
-    return '';
-  }
-}
-
-function setSyncStatus(status, error) {
-  const previousStatus = currentSyncStatus;
-  currentSyncStatus = status;
-  if (!syncBannerElement || !syncBannerMessage) {
-    return;
-  }
-
-  if (hideSyncBannerTimer) {
-    window.clearTimeout(hideSyncBannerTimer);
-    hideSyncBannerTimer = null;
-  }
-
-  syncBannerElement.classList.remove('status-connecting', 'status-connected', 'status-offline', 'hidden');
-
-  let message = '';
-  if (status === 'connecting') {
-    message = 'Connecting to the Azmat data server…';
-  } else if (status === 'connected') {
-    message = 'Data is synced to the Azmat server. You can open the app on any device and see the same records.';
-  } else {
-    const detail = describeSyncError(error);
-    let hint = ' Start the server with "npm start" on your host or set window.__AZMAT_API_BASE__ to your deployed API domain.';
-    if (detail && /auth|sign\s?in|login/i.test(detail)) {
-      hint = ' Sign in with your Azmat credentials to resume syncing.';
-    }
-    message = 'Unable to reach the Azmat data server. Changes will stay in this browser until the connection is restored.';
-    if (detail) {
-      message += ` (${detail})`;
-    }
-    message += hint;
-  }
-
-  syncBannerMessage.textContent = message;
-  syncBannerElement.classList.add(`status-${status}`);
-
-  if (status === 'connected') {
-    hideSyncBannerTimer = window.setTimeout(() => {
-      syncBannerElement.classList.add('hidden');
-      hideSyncBannerTimer = null;
-    }, 4000);
-  }
-
-  if (previousStatus === status && status === 'offline') {
-    syncBannerElement.classList.remove('hidden');
-  }
-}
-
-function setAuthToken(token, user) {
-  authToken = token || '';
-  if (user && typeof user === 'object') {
-    authUser = { ...user };
-  }
-  try {
-    if (authToken) {
-      localStorage.setItem(authStorageKey, authToken);
-    } else {
-      localStorage.removeItem(authStorageKey);
-    }
-  } catch (error) {
-    console.warn('Unable to persist authentication token.', error);
-  }
-  if (bodyElement) {
-    if (authToken) {
-      bodyElement.classList.remove('app-locked');
-    } else {
-      bodyElement.classList.add('app-locked');
-    }
-  }
-  if (!authToken) {
-    stateHydratedFromServer = false;
-  }
-}
-
-function getAuthHeaders() {
-  if (!authToken) {
-    return {};
-  }
-  return { Authorization: `Bearer ${authToken}` };
-}
 
 function normalizeText(value) {
   return value ? String(value).trim().toLowerCase() : '';
@@ -284,13 +151,9 @@ function applyStateSnapshot(snapshot) {
 async function fetchRemoteState() {
   const response = await fetch(resolveApiPath('/api/state'), {
     method: 'GET',
-    headers: { Accept: 'application/json', ...getAuthHeaders() },
+    headers: { Accept: 'application/json' },
     credentials: 'include'
   });
-  if (response.status === 401) {
-    handleUnauthorized('Authentication required. Please sign in to continue.');
-    throw new Error('Authentication required');
-  }
   if (!response.ok) {
     throw new Error(`Failed to fetch remote state (${response.status})`);
   }
@@ -298,38 +161,21 @@ async function fetchRemoteState() {
 }
 
 async function pushRemoteState(snapshot) {
-  if (!authToken) {
-    throw new Error('Authentication required. Please sign in.');
-  }
   const payload = snapshot || getSerializableState();
-  if (currentSyncStatus !== 'offline') {
-    setSyncStatus('connecting');
+  const response = await fetch(resolveApiPath('/api/state'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to persist remote state (${response.status})`);
   }
-  try {
-    const response = await fetch(resolveApiPath('/api/state'), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...getAuthHeaders() },
-      credentials: 'include',
-      body: JSON.stringify(payload)
-    });
-    if (response.status === 401) {
-      handleUnauthorized('Authentication required. Please sign in to continue.');
-      throw new Error('Authentication required');
-    }
-    if (!response.ok) {
-      throw new Error(`Failed to persist remote state (${response.status})`);
-    }
-    const data = await response.json();
-    setSyncStatus('connected');
-    return data;
-  } catch (error) {
-    setSyncStatus('offline', error);
-    throw error;
-  }
+  return response.json();
 }
 
 function queueRemotePersist() {
-  if (!stateHydratedFromServer || !authToken) {
+  if (!stateHydratedFromServer) {
     return;
   }
   if (persistQueue.timer) {
@@ -337,9 +183,6 @@ function queueRemotePersist() {
   }
   persistQueue.timer = setTimeout(() => {
     persistQueue.timer = null;
-    if (!authToken) {
-      return;
-    }
     pushRemoteState().catch(error => {
       console.warn('Unable to sync data with the server. Changes will remain saved locally until the next successful sync.', error);
     });
@@ -351,27 +194,17 @@ async function bootstrapState() {
   if (localSnapshot) {
     applyStateSnapshot(localSnapshot);
   }
-  if (!authToken) {
-    return;
-  }
-  setSyncStatus('connecting');
   let remoteLoaded = false;
   try {
     const remoteSnapshot = await fetchRemoteState();
     if (remoteSnapshot) {
       const normalized = applyStateSnapshot(remoteSnapshot);
       saveLocalSnapshot(normalized);
+      remoteLoaded = true;
     }
-    remoteLoaded = true;
-    setSyncStatus('connected');
   } catch (error) {
     console.warn('Falling back to locally cached data because the server state could not be loaded.', error);
-    setSyncStatus('offline', error);
   } finally {
-    if (!authToken) {
-      stateHydratedFromServer = false;
-      return;
-    }
     stateHydratedFromServer = true;
     if (!remoteLoaded) {
       queueRemotePersist();
@@ -755,168 +588,8 @@ const dom = {
     customRange: document.getElementById('dashboardCustomRange'),
     start: document.getElementById('dashboardRangeStart'),
     end: document.getElementById('dashboardRangeEnd')
-  },
-  theme: {
-    toggle: document.getElementById('dashboardThemeToggle')
-  },
-  auth: {
-    overlay: document.getElementById('authOverlay'),
-    form: document.getElementById('authForm'),
-    username: document.getElementById('authUsername'),
-    password: document.getElementById('authPassword'),
-    submit: document.getElementById('authSubmit'),
-    message: document.getElementById('authMessage'),
-    error: document.getElementById('authError')
   }
 };
-
-if (dom.auth && dom.auth.submit && dom.auth.submit.textContent) {
-  authSubmitDefaultLabel = dom.auth.submit.textContent;
-}
-
-function setThemePreference(mode) {
-  const useDark = mode === 'dark';
-  if (bodyElement) {
-    bodyElement.classList.toggle('dark-theme', useDark);
-  }
-  try {
-    localStorage.setItem(themeStorageKey, useDark ? 'dark' : 'light');
-  } catch (error) {
-    console.warn('Unable to persist theme preference.', error);
-  }
-  if (dom.theme && dom.theme.toggle) {
-    dom.theme.toggle.checked = useDark;
-  }
-}
-
-function initializeThemeToggle() {
-  if (!dom.theme || !dom.theme.toggle) {
-    return;
-  }
-  const useDark = bodyElement ? bodyElement.classList.contains('dark-theme') : false;
-  dom.theme.toggle.checked = useDark;
-  dom.theme.toggle.addEventListener('change', event => {
-    setThemePreference(event.target.checked ? 'dark' : 'light');
-  });
-}
-
-function showAuthOverlay(message) {
-  if (!dom.auth || !dom.auth.overlay) {
-    return;
-  }
-  dom.auth.overlay.classList.remove('hidden');
-  if (bodyElement) {
-    bodyElement.classList.add('app-locked');
-  }
-  if (dom.auth.message && message) {
-    dom.auth.message.textContent = message;
-  }
-  if (dom.auth.error) {
-    dom.auth.error.textContent = '';
-  }
-  if (dom.auth.username) {
-    window.setTimeout(() => dom.auth.username.focus(), 60);
-  }
-}
-
-function hideAuthOverlay() {
-  if (!dom.auth || !dom.auth.overlay) {
-    return;
-  }
-  dom.auth.overlay.classList.add('hidden');
-  if (dom.auth.error) {
-    dom.auth.error.textContent = '';
-  }
-}
-
-function handleUnauthorized(message) {
-  const detail = message || 'Authentication required. Please sign in to continue.';
-  setAuthToken('');
-  setSyncStatus('offline', detail);
-  showAuthOverlay(detail);
-  if (dom.auth && dom.auth.error) {
-    dom.auth.error.textContent = detail;
-  }
-}
-
-async function attemptLogin(username, password) {
-  const response = await fetch(resolveApiPath('/api/login'), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json'
-    },
-    body: JSON.stringify({ username, password })
-  });
-  if (response.status === 401) {
-    throw new Error('Invalid username or password.');
-  }
-  if (!response.ok) {
-    throw new Error('Unable to sign in right now. Please try again.');
-  }
-  return response.json();
-}
-
-function initializeAuthUi() {
-  if (!dom.auth || !dom.auth.form) {
-    return;
-  }
-  dom.auth.form.addEventListener('submit', async event => {
-    event.preventDefault();
-    const username = dom.auth.username ? dom.auth.username.value.trim() : '';
-    const password = dom.auth.password ? dom.auth.password.value : '';
-    if (!username || !password) {
-      if (dom.auth.error) {
-        dom.auth.error.textContent = 'Enter both username and password to continue.';
-      }
-      return;
-    }
-    if (dom.auth.submit) {
-      dom.auth.submit.disabled = true;
-      dom.auth.submit.textContent = 'Signing In…';
-    }
-    if (dom.auth.error) {
-      dom.auth.error.textContent = '';
-    }
-    try {
-      const result = await attemptLogin(username, password);
-      setAuthToken(result.token, result.user || { username });
-      hideAuthOverlay();
-      if (dom.auth.form) {
-        dom.auth.form.reset();
-      }
-      await bootstrapAfterAuth();
-    } catch (error) {
-      const message = error && error.message ? error.message : 'Unable to sign in. Please try again.';
-      showAuthOverlay(message);
-      if (dom.auth.error) {
-        dom.auth.error.textContent = message;
-      }
-    } finally {
-      if (dom.auth.submit) {
-        dom.auth.submit.disabled = false;
-        dom.auth.submit.textContent = authSubmitDefaultLabel;
-      }
-    }
-  });
-}
-
-async function bootstrapAfterAuth() {
-  if (bootstrapPromise) {
-    return bootstrapPromise;
-  }
-  bootstrapPromise = (async () => {
-    await bootstrapState();
-    reconcileCompletedTripFinancials();
-    renderAll();
-    updateAllSelectOptions();
-  })();
-  try {
-    await bootstrapPromise;
-  } finally {
-    bootstrapPromise = null;
-  }
-}
 
 function initializeModalDefaults() {
   document.querySelectorAll('.modal').forEach(modal => {
@@ -980,30 +653,21 @@ function isEditing(type) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  if (dom.year) {
-    dom.year.textContent = new Date().getFullYear();
-  }
+  dom.year.textContent = new Date().getFullYear();
 
   initializeModalDefaults();
   setupModals();
   setupForms();
   setupFilters();
-  initializeThemeToggle();
-  initializeAuthUi();
-  if (dom.exportBtn) {
-    dom.exportBtn.addEventListener('click', exportWorkbook);
-  }
+  dom.exportBtn.addEventListener('click', exportWorkbook);
 
   renderAll();
   updateAllSelectOptions();
 
-  if (authToken) {
-    hideAuthOverlay();
-    await bootstrapAfterAuth();
-  } else {
-    showAuthOverlay('Sign in with your Azmat administrator account to manage fleet operations.');
-    setSyncStatus('offline', 'Authentication required. Please sign in to sync data.');
-  }
+  await bootstrapState();
+  reconcileCompletedTripFinancials();
+  renderAll();
+  updateAllSelectOptions();
 });
 
 function setupModals() {

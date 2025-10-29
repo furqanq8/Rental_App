@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 const path = require('path');
 const express = require('express');
 const morgan = require('morgan');
@@ -109,6 +107,10 @@ app.use(morgan('tiny'));
 app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+app.get('/api/state', async (req, res, next) => {
   res.json({ status: 'ok', auth: Boolean(expectedUsername && expectedPassword) ? 'enabled' : 'disabled' });
 });
 
@@ -147,6 +149,7 @@ app.get('/api/state', requireAuth, async (req, res, next) => {
   }
 });
 
+app.put('/api/state', async (req, res, next) => {
 app.put('/api/state', requireAuth, async (req, res, next) => {
   const payload = req.body;
   if (!payload || typeof payload !== 'object') {
