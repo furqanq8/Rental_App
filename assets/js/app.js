@@ -1,3 +1,4 @@
+const storageKey = 'azmat-fleet-state-v2';
 const apiBase = (window.__AZMAT_API_BASE__ || document.documentElement.getAttribute('data-api-base') || '').replace(/\/$/, '');
 const storageKey = 'azmat-fleet-state-v3';
 const defaultState = {
@@ -71,6 +72,15 @@ function findVehicleOwnership(vehicleId, fleetList = state.fleet) {
   return match ? match.ownership || '' : '';
 }
 
+function loadState() {
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return normalizeState(parsed);
+    }
+  } catch (error) {
+    console.warn('Unable to load saved data. Starting fresh.', error);
 function resolveApiPath(path) {
   if (!path.startsWith('/')) {
     return `${apiBase}/${path}`;
@@ -305,6 +315,10 @@ function hydrateDerivedCollections(currentState) {
 
 function persistState() {
   try {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch (error) {
+    console.warn('Unable to persist data to localStorage.', error);
+  }
     saveLocalSnapshot(getSerializableState());
   } catch (error) {
     console.warn('Unable to persist data locally.', error);
@@ -652,6 +666,7 @@ function isEditing(type) {
   return editingContext.type === type && editingContext.index > -1;
 }
 
+document.addEventListener('DOMContentLoaded', () => {
 document.addEventListener('DOMContentLoaded', async () => {
   dom.year.textContent = new Date().getFullYear();
 
@@ -659,6 +674,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupModals();
   setupForms();
   setupFilters();
+  reconcileCompletedTripFinancials();
   dom.exportBtn.addEventListener('click', exportWorkbook);
 
   renderAll();

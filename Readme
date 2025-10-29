@@ -1,16 +1,31 @@
 # Azmat Rental Fleet Management
 
+This project contains a responsive, client-side web application for Azmat's rental fleet operations. It lets the team capture fleet, driver, trip, invoice, and supplier payment information while keeping a live overview of billing and payables status.
 This project contains a responsive web application for Azmat's rental fleet operations. It lets the team capture fleet, driver, trip, invoice, and supplier payment information while keeping a live overview of billing and payables status. The UI is still a lightweight vanilla-JavaScript experience, but it now persists data in a SQLite database through an Express API so the records are available from any device.
 
 ## Features
 
 - **Unified dashboards** for fleet inventory, driver roster, trip log, customer invoicing, and supplier payments.
 - **Mobile-first layout** with card shortcuts, touch-friendly tables, and responsive modals.
+- **Data persistence in the browser** using `localStorage` so entries remain between sessions on the same device.
 - **Database-backed persistence** through a Node/Express API layer with SQLite storage so records survive browser refreshes and device changes.
 - **Excel export** powered by [SheetJS](https://sheetjs.com/) to download all registers as a multi-sheet workbook.
 - **Invoice PDF generation** using [jsPDF](https://github.com/parallax/jsPDF) so customer invoices can be printed or emailed.
 - **Finance reports** summarizing invoice collections and supplier payable status at a glance.
 
+## Getting Started
+
+1. Open `index.html` in a modern browser (Chrome, Edge, Firefox, or Safari).
+2. Use the cards at the top of the page to add new fleet units, drivers, trips, customer invoices, or supplier payments.
+3. Filter fleet, invoice, and supplier tables using the dropdown filters.
+4. Click **Export All Data** to download the complete dataset as an Excel workbook.
+5. Use the **Print PDF** button in the invoice table to generate a customer-ready PDF.
+
+> ⚠️ All records are stored in the browser's `localStorage`. Clearing the browser storage or using a different browser/device will reset the data.
+
+## Development Notes
+
+The application is built as a static site with vanilla JavaScript and relies on CDN-hosted libraries for Excel and PDF capabilities. No additional build tooling is required.
 ## Architecture Overview
 
 - **Frontend:** `index.html` plus `assets/` static files served by the Express app. State is fetched from `/api/state` and synced back after every change.
