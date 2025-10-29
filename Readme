@@ -7,14 +7,16 @@ This project contains a responsive web application for Azmat's rental fleet oper
 - **Unified dashboards** for fleet inventory, driver roster, trip log, customer invoicing, and supplier payments.
 - **Mobile-first layout** with card shortcuts, touch-friendly tables, and responsive modals.
 - **Database-backed persistence** through a Node/Express API layer with SQLite storage so records survive browser refreshes and device changes.
+- **Secure sign-in** gate that requires an administrator username/password before any fleet data is visible or synchronized.
 - **Excel export** powered by [SheetJS](https://sheetjs.com/) to download all registers as a multi-sheet workbook.
 - **Invoice PDF generation** using [jsPDF](https://github.com/parallax/jsPDF) so customer invoices can be printed or emailed.
 - **Finance reports** summarizing invoice collections and supplier payable status at a glance.
+- **One-click dark theme** toggle for the business dashboard so night-time operations stay comfortable on the eyes.
 
 ## Architecture Overview
 
 - **Frontend:** `index.html` plus `assets/` static files served by the Express app. State is fetched from `/api/state` and synced back after every change.
-- **Backend:** `server/index.js` runs an Express server with CORS support, JSON parsing, and logging. It exposes `/api/state` and `/api/health` endpoints.
+- **Backend:** `server/index.js` runs an Express server with CORS support, JSON parsing, logging, and in-memory session authentication. It exposes `/api/login`, `/api/logout`, `/api/session`, `/api/state`, and `/api/health` endpoints.
 - **Database:** `server/storage.js` manages a SQLite file (default `data/azmat.sqlite3`) containing the serialized application state. The file is created automatically on first run.
 
 ## Local Development
@@ -36,10 +38,13 @@ This project contains a responsive web application for Azmat's rental fleet oper
 
 The Express server serves the static frontend and handles API requests in the same origin, so you can use the application immediately. Any records you enter will be written to `data/azmat.sqlite3`.
 
+By default the development server starts with `admin` / `admin` credentials. Update `AZMAT_AUTH_USERNAME` and `AZMAT_AUTH_PASSWORD` in a `.env` file to pick your own secrets.
+
 ## Troubleshooting Persistence
 
 - **Seeing an "Unable to reach the Azmat data server" banner?** The UI falls back to browser storage when the Express API is unreachable. Make sure the Node server is running locally (`npm start` / `npm run dev`) or that your deployed API endpoint is online.
-- **Hosting the frontend separately?** Configure `window.__AZMAT_API_BASE__ = 'https://api.yourdomain.com'` (or set `data-api-base` on the `<html>` tag) so the app knows where to send `/api/state` requests, and add that domain to the backend `ALLOWED_ORIGINS`.
+- **Need to log back in?** The app locks itself when the authentication token expires. Refresh the page to re-enter your credentials and continue syncing data.
+- **Hosting the frontend separately?** Configure `window.__AZMAT_API_BASE__ = 'https://api.yourdomain.com'` (or set `data-api-base` on the `<html>` tag) so the app knows where to send `/api` requests, and add that domain to the backend `ALLOWED_ORIGINS`.
 - **Serving files directly from disk or another static server?** Without the API, each browser maintains isolated data in localStorage. Run the provided Express server so records persist in the shared SQLite database.
 
 ## Deployment & Custom Domains
@@ -50,6 +55,8 @@ The Express server serves the static frontend and handles API requests in the sa
    - `PORT` – optional port override supplied by your host.
    - `DATABASE_PATH` – optional absolute/relative path if you want the SQLite file in a different location or mounted volume.
    - `ALLOWED_ORIGINS` – comma separated list of domains allowed to call the API if you serve the frontend separately.
+   - `AZMAT_AUTH_USERNAME` & `AZMAT_AUTH_PASSWORD` – credentials required to unlock the dashboard.
+   - `SESSION_TTL_MS` – optional session lifetime override (default is 12 hours).
 4. **Point your custom domain:** Create an A/AAAA or CNAME record from your registrar to the hosting provider's endpoint. Complete any SSL configuration your provider requires.
 5. **(Optional) Separate frontend hosting:** If you host the static files elsewhere, set `window.__AZMAT_API_BASE__ = 'https://api.yourdomain.com';` before loading `assets/js/app.js` (or add `data-api-base="https://api.yourdomain.com"` to the `<html>` tag), and allow the frontend domain through `ALLOWED_ORIGINS`.
 
@@ -57,6 +64,7 @@ Once deployed, opening your custom domain will serve the Azmat dashboard backed 
 
 ## Operations Notes
 
-- The `/api/health` endpoint returns `{ status: 'ok' }` for uptime monitoring.
+- The `/api/health` endpoint returns `{ status: 'ok', auth: 'enabled' }` for uptime monitoring.
+- Call `/api/login` to exchange administrator credentials for a bearer token, `/api/session` to validate an existing token, and `/api/logout` to revoke it ahead of expiry.
 - Logs are emitted with `morgan` in the "tiny" format; integrate them with your platform's logging solution as needed.
 - Database migrations are not required because all entities are stored within the single serialized state record. You can reset the app by deleting the SQLite file.
