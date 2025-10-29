@@ -1,4 +1,6 @@
 const storageKey = 'azmat-fleet-state-v2';
+const apiBase = (window.__AZMAT_API_BASE__ || document.documentElement.getAttribute('data-api-base') || '').replace(/\/$/, '');
+const storageKey = 'azmat-fleet-state-v3';
 const defaultState = {
   fleet: [],
   drivers: [],
@@ -16,6 +18,8 @@ const defaultState = {
 };
 
 const state = loadState();
+let stateHydratedFromServer = false;
+const persistQueue = { timer: null };
 const selectRefs = {};
 let tripIdInput;
 let tripOwnershipField;
@@ -77,6 +81,151 @@ function loadState() {
     }
   } catch (error) {
     console.warn('Unable to load saved data. Starting fresh.', error);
+function resolveApiPath(path) {
+  if (!path.startsWith('/')) {
+    return `${apiBase}/${path}`;
+  }
+  if (!apiBase) {
+    return path;
+  }
+  return `${apiBase}${path}`;
+}
+
+function cloneRecordArray(source) {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source.map(item => {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+    return { ...item };
+  });
+}
+
+function getSerializableState() {
+  const snapshot = normalizeState(state);
+  return {
+    fleet: cloneRecordArray(snapshot.fleet),
+    drivers: cloneRecordArray(snapshot.drivers),
+    trips: cloneRecordArray(snapshot.trips),
+    invoices: cloneRecordArray(snapshot.invoices),
+    suppliers: cloneRecordArray(snapshot.suppliers),
+    supplierDirectory: cloneRecordArray(snapshot.supplierDirectory),
+    customers: Array.isArray(snapshot.customers) ? [...snapshot.customers] : [],
+    dashboardFilter: snapshot.dashboardFilter ? { ...snapshot.dashboardFilter } : { ...defaultState.dashboardFilter },
+    nextTripNumber: typeof snapshot.nextTripNumber === 'number' && snapshot.nextTripNumber > 0
+      ? snapshot.nextTripNumber
+      : defaultState.nextTripNumber
+  };
+}
+
+function loadLocalSnapshot() {
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (error) {
+    console.warn('Unable to read local snapshot.', error);
+  }
+  return null;
+}
+
+function saveLocalSnapshot(snapshot) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(snapshot));
+  } catch (error) {
+    console.warn('Unable to persist snapshot locally.', error);
+  }
+}
+
+function applyStateSnapshot(snapshot) {
+  const normalized = normalizeState(snapshot);
+  state.fleet = cloneRecordArray(normalized.fleet);
+  state.drivers = cloneRecordArray(normalized.drivers);
+  state.trips = cloneRecordArray(normalized.trips);
+  state.invoices = cloneRecordArray(normalized.invoices);
+  state.suppliers = cloneRecordArray(normalized.suppliers);
+  state.supplierDirectory = cloneRecordArray(normalized.supplierDirectory);
+  state.customers = Array.isArray(normalized.customers) ? [...normalized.customers] : [];
+  state.dashboardFilter = normalized.dashboardFilter
+    ? { ...normalized.dashboardFilter }
+    : { ...defaultState.dashboardFilter };
+  state.nextTripNumber = typeof normalized.nextTripNumber === 'number' && normalized.nextTripNumber > 0
+    ? normalized.nextTripNumber
+    : defaultState.nextTripNumber;
+  return getSerializableState();
+}
+
+async function fetchRemoteState() {
+  const response = await fetch(resolveApiPath('/api/state'), {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    credentials: 'include'
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch remote state (${response.status})`);
+  }
+  return response.json();
+}
+
+async function pushRemoteState(snapshot) {
+  const payload = snapshot || getSerializableState();
+  const response = await fetch(resolveApiPath('/api/state'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to persist remote state (${response.status})`);
+  }
+  return response.json();
+}
+
+function queueRemotePersist() {
+  if (!stateHydratedFromServer) {
+    return;
+  }
+  if (persistQueue.timer) {
+    clearTimeout(persistQueue.timer);
+  }
+  persistQueue.timer = setTimeout(() => {
+    persistQueue.timer = null;
+    pushRemoteState().catch(error => {
+      console.warn('Unable to sync data with the server. Changes will remain saved locally until the next successful sync.', error);
+    });
+  }, 300);
+}
+
+async function bootstrapState() {
+  const localSnapshot = loadLocalSnapshot();
+  if (localSnapshot) {
+    applyStateSnapshot(localSnapshot);
+  }
+  let remoteLoaded = false;
+  try {
+    const remoteSnapshot = await fetchRemoteState();
+    if (remoteSnapshot) {
+      const normalized = applyStateSnapshot(remoteSnapshot);
+      saveLocalSnapshot(normalized);
+      remoteLoaded = true;
+    }
+  } catch (error) {
+    console.warn('Falling back to locally cached data because the server state could not be loaded.', error);
+  } finally {
+    stateHydratedFromServer = true;
+    if (!remoteLoaded) {
+      queueRemotePersist();
+    }
+  }
+}
+
+function loadState() {
+  const snapshot = loadLocalSnapshot();
+  if (snapshot) {
+    return normalizeState(snapshot);
   }
   return JSON.parse(JSON.stringify(defaultState));
 }
@@ -170,6 +319,11 @@ function persistState() {
   } catch (error) {
     console.warn('Unable to persist data to localStorage.', error);
   }
+    saveLocalSnapshot(getSerializableState());
+  } catch (error) {
+    console.warn('Unable to persist data locally.', error);
+  }
+  queueRemotePersist();
 }
 
 function parseDateValue(value) {
@@ -513,6 +667,7 @@ function isEditing(type) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   dom.year.textContent = new Date().getFullYear();
 
   initializeModalDefaults();
@@ -522,6 +677,11 @@ document.addEventListener('DOMContentLoaded', () => {
   reconcileCompletedTripFinancials();
   dom.exportBtn.addEventListener('click', exportWorkbook);
 
+  renderAll();
+  updateAllSelectOptions();
+
+  await bootstrapState();
+  reconcileCompletedTripFinancials();
   renderAll();
   updateAllSelectOptions();
 });
