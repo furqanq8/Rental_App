@@ -4,6 +4,8 @@ This project contains a responsive web application for Azmat's rental fleet oper
 trip, invoice, and supplier payment information while keeping a live overview of billing and payables status. The UI remains a
 lightweight vanilla-JavaScript experience, and the bundled Node server now persists data to a JSON file so records stay synced
 across browsers without requiring any third-party npm packages.
+This project contains a responsive, client-side web application for Azmat's rental fleet operations. It lets the team capture fleet, driver, trip, invoice, and supplier payment information while keeping a live overview of billing and payables status.
+This project contains a responsive web application for Azmat's rental fleet operations. It lets the team capture fleet, driver, trip, invoice, and supplier payment information while keeping a live overview of billing and payables status. The UI is still a lightweight vanilla-JavaScript experience, but it now persists data in a SQLite database through an Express API so the records are available from any device.
 
 ## Features
 
@@ -24,6 +26,30 @@ across browsers without requiring any third-party npm packages.
   parsing. It exposes `/api/login`, `/api/logout`, `/api/session`, `/api/state`, and `/api/health` endpoints.
 - **Persistence:** `server/storage.js` writes the serialized application state to `data/azmat-state.json` (configurable through
   `DATABASE_PATH`). The file is created automatically on first run.
+- **Data persistence in the browser** using `localStorage` so entries remain between sessions on the same device.
+- **Database-backed persistence** through a Node/Express API layer with SQLite storage so records survive browser refreshes and device changes.
+- **Excel export** powered by [SheetJS](https://sheetjs.com/) to download all registers as a multi-sheet workbook.
+- **Invoice PDF generation** using [jsPDF](https://github.com/parallax/jsPDF) so customer invoices can be printed or emailed.
+- **Finance reports** summarizing invoice collections and supplier payable status at a glance.
+
+## Getting Started
+
+1. Open `index.html` in a modern browser (Chrome, Edge, Firefox, or Safari).
+2. Use the cards at the top of the page to add new fleet units, drivers, trips, customer invoices, or supplier payments.
+3. Filter fleet, invoice, and supplier tables using the dropdown filters.
+4. Click **Export All Data** to download the complete dataset as an Excel workbook.
+5. Use the **Print PDF** button in the invoice table to generate a customer-ready PDF.
+
+> ⚠️ All records are stored in the browser's `localStorage`. Clearing the browser storage or using a different browser/device will reset the data.
+
+## Development Notes
+
+The application is built as a static site with vanilla JavaScript and relies on CDN-hosted libraries for Excel and PDF capabilities. No additional build tooling is required.
+## Architecture Overview
+
+- **Frontend:** `index.html` plus `assets/` static files served by the Express app. State is fetched from `/api/state` and synced back after every change.
+- **Backend:** `server/index.js` runs an Express server with CORS support, JSON parsing, and logging. It exposes `/api/state` and `/api/health` endpoints.
+- **Database:** `server/storage.js` manages a SQLite file (default `data/azmat.sqlite3`) containing the serialized application state. The file is created automatically on first run.
 
 ## Local Development
 
@@ -55,6 +81,21 @@ By default the development server starts with `admin` / `admin` credentials. Upd
   `ALLOWED_ORIGINS`.
 - **Serving files directly from disk or another static server?** Without the API, each browser maintains isolated data in
   localStorage. Run the provided Node server so records persist in the shared JSON data file.
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Copy the environment template if you want to override defaults:
+   ```bash
+   cp .env.example .env
+   ```
+4. Start the development server:
+   ```bash
+   npm run dev
+   ```
+5. Open [http://localhost:3000](http://localhost:3000) in a modern browser (Chrome, Edge, Firefox, Safari).
+
+The Express server serves the static frontend and handles API requests in the same origin, so you can use the application immediately. Any records you enter will be written to `data/azmat.sqlite3`.
 
 ## Deployment & Custom Domains
 
@@ -85,3 +126,18 @@ can be created by copying the state file on the host.
   restricted environments where npm registry access is unavailable.
 - All entities are stored within the single serialized state record. You can reset the app by deleting the JSON file defined by
   `DATABASE_PATH`.
+2. **Upload the repo:** Push this repository to a Git provider and connect it to the hosting service. Configure the start command to `npm run start`.
+3. **Configure environment variables:**
+   - `PORT` – optional port override supplied by your host.
+   - `DATABASE_PATH` – optional absolute/relative path if you want the SQLite file in a different location or mounted volume.
+   - `ALLOWED_ORIGINS` – comma separated list of domains allowed to call the API if you serve the frontend separately.
+4. **Point your custom domain:** Create an A/AAAA or CNAME record from your registrar to the hosting provider's endpoint. Complete any SSL configuration your provider requires.
+5. **(Optional) Separate frontend hosting:** If you host the static files elsewhere, set `window.__AZMAT_API_BASE__ = 'https://api.yourdomain.com';` before loading `assets/js/app.js` (or add `data-api-base="https://api.yourdomain.com"` to the `<html>` tag), and allow the frontend domain through `ALLOWED_ORIGINS`.
+
+Once deployed, opening your custom domain will serve the Azmat dashboard backed by the live SQLite database on the server. Backups can be created by copying the database file on the host.
+
+## Operations Notes
+
+- The `/api/health` endpoint returns `{ status: 'ok' }` for uptime monitoring.
+- Logs are emitted with `morgan` in the "tiny" format; integrate them with your platform's logging solution as needed.
+- Database migrations are not required because all entities are stored within the single serialized state record. You can reset the app by deleting the SQLite file.

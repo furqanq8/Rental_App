@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const fsp = fs.promises;
+const { promisify } = require('util');
+const sqlite3 = require('sqlite3').verbose();
 
 const defaultState = require('./defaultState.json');
 
@@ -9,6 +11,14 @@ const databasePath = process.env.DATABASE_PATH
   : path.join(__dirname, '..', 'data', 'azmat-state.json');
 
 fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+
+  : path.join(__dirname, '..', 'data', 'azmat.sqlite3');
+
+fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+
+const db = new sqlite3.Database(databasePath);
+const getAsync = promisify(db.get.bind(db));
+const runAsync = promisify(db.run.bind(db));
 
 function normalizeSnapshot(raw) {
   const base = JSON.parse(JSON.stringify(defaultState));
@@ -48,6 +58,16 @@ async function initialize() {
     await fsp.access(databasePath, fs.constants.F_OK);
   } catch (error) {
     await fsp.writeFile(databasePath, JSON.stringify(defaultState, null, 2), 'utf8');
+  await runAsync(`CREATE TABLE IF NOT EXISTS app_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    data TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  const existing = await getAsync('SELECT data FROM app_state WHERE id = 1');
+  if (!existing) {
+    const initial = JSON.stringify(defaultState);
+    await runAsync('INSERT INTO app_state (id, data) VALUES (1, ?)', initial);
   }
 }
 
@@ -59,6 +79,15 @@ async function getState() {
   } catch (error) {
     console.warn('Unable to read persisted state. Resetting to defaults.', error);
     await fsp.writeFile(databasePath, JSON.stringify(defaultState, null, 2), 'utf8');
+  const row = await getAsync('SELECT data FROM app_state WHERE id = 1');
+  if (!row || !row.data) {
+    return JSON.parse(JSON.stringify(defaultState));
+  }
+  try {
+    const parsed = JSON.parse(row.data);
+    return normalizeSnapshot(parsed);
+  } catch (error) {
+    console.warn('Unable to parse persisted state. Resetting to defaults.', error);
     return JSON.parse(JSON.stringify(defaultState));
   }
 }
@@ -67,6 +96,13 @@ async function saveState(payload) {
   const normalized = normalizeSnapshot(payload);
   const serialized = JSON.stringify(normalized, null, 2);
   await fsp.writeFile(databasePath, serialized, 'utf8');
+  const serialized = JSON.stringify(normalized);
+  await runAsync(
+    `INSERT INTO app_state (id, data, updated_at)
+     VALUES (1, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+    serialized
+  );
   return normalized;
 }
 
