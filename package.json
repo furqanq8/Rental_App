@@ -1,5 +1,10 @@
 {
   "name": "azmat-rental-app",
+  "version": "1.1.1",
+  "description": "Azmat rental fleet management dashboard with built-in Node persistence",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
   "version": "1.1.0",
   "description": "Azmat rental fleet management dashboard with Express + SQLite persistence",
   "main": "server/index.js",
@@ -14,6 +19,7 @@
     "azmat"
   ],
   "author": "",
+  "license": "MIT"
   "license": "MIT",
   "dependencies": {
     "dotenv": "^16.4.5",

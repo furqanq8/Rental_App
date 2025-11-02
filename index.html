@@ -13,6 +13,26 @@
   <script src="assets/js/app.js" defer></script>
 </head>
 <body>
+  <div id="authOverlay" class="auth-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <form id="authForm" class="auth-card" novalidate>
+      <h2 id="authTitle">Secure Access</h2>
+      <p id="authMessage" class="auth-message">Sign in with your Azmat administrator account to manage fleet operations.</p>
+      <div class="auth-field">
+        <label for="authUsername">Username</label>
+        <input type="text" id="authUsername" name="username" autocomplete="username" required />
+      </div>
+      <div class="auth-field">
+        <label for="authPassword">Password</label>
+        <input type="password" id="authPassword" name="password" autocomplete="current-password" required />
+      </div>
+      <p id="authError" class="auth-error" role="alert" aria-live="assertive"></p>
+      <button type="submit" id="authSubmit" class="btn primary full-width">Sign In</button>
+    </form>
+  </div>
+  <div id="syncStatusBanner" class="sync-banner hidden" role="status" aria-live="polite">
+    <span class="sync-icon" aria-hidden="true"></span>
+    <p id="syncStatusMessage">Connecting to the Azmat data server…</p>
+  </div>
   <header class="app-header">
     <div>
       <h1>Azmat Rental Fleet Management</h1>
@@ -33,6 +53,12 @@
             <button type="button" class="range-button" data-range="thisMonth">This Month</button>
             <button type="button" class="range-button" data-range="lastMonth">Last Month</button>
             <button type="button" class="range-button" data-range="custom">Custom</button>
+          </div>
+          <div class="dashboard-theme-toggle">
+            <label class="theme-toggle" for="dashboardThemeToggle">
+              <input type="checkbox" id="dashboardThemeToggle" />
+              <span>Dark Theme</span>
+            </label>
           </div>
           <div class="dashboard-custom-range" id="dashboardCustomRange">
             <label>
