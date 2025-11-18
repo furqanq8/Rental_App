@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const fsp = fs.promises;
 const { promisify } = require('util');
 const sqlite3 = require('sqlite3').verbose();
 
@@ -7,6 +8,10 @@ const defaultState = require('./defaultState.json');
 
 const databasePath = process.env.DATABASE_PATH
   ? path.resolve(process.env.DATABASE_PATH)
+  : path.join(__dirname, '..', 'data', 'azmat-state.json');
+
+fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+
   : path.join(__dirname, '..', 'data', 'azmat.sqlite3');
 
 fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -49,6 +54,10 @@ function normalizeSnapshot(raw) {
 }
 
 async function initialize() {
+  try {
+    await fsp.access(databasePath, fs.constants.F_OK);
+  } catch (error) {
+    await fsp.writeFile(databasePath, JSON.stringify(defaultState, null, 2), 'utf8');
   await runAsync(`CREATE TABLE IF NOT EXISTS app_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL,
@@ -63,6 +72,13 @@ async function initialize() {
 }
 
 async function getState() {
+  try {
+    const serialized = await fsp.readFile(databasePath, 'utf8');
+    const parsed = JSON.parse(serialized);
+    return normalizeSnapshot(parsed);
+  } catch (error) {
+    console.warn('Unable to read persisted state. Resetting to defaults.', error);
+    await fsp.writeFile(databasePath, JSON.stringify(defaultState, null, 2), 'utf8');
   const row = await getAsync('SELECT data FROM app_state WHERE id = 1');
   if (!row || !row.data) {
     return JSON.parse(JSON.stringify(defaultState));
@@ -78,6 +94,8 @@ async function getState() {
 
 async function saveState(payload) {
   const normalized = normalizeSnapshot(payload);
+  const serialized = JSON.stringify(normalized, null, 2);
+  await fsp.writeFile(databasePath, serialized, 'utf8');
   const serialized = JSON.stringify(normalized);
   await runAsync(
     `INSERT INTO app_state (id, data, updated_at)

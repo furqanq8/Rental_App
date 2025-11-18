@@ -1,16 +1,50 @@
 # Azmat Rental Fleet Management
 
+This project contains a responsive web application for Azmat's rental fleet operations. It lets the team capture fleet, driver,
+trip, invoice, and supplier payment information while keeping a live overview of billing and payables status. The UI remains a
+lightweight vanilla-JavaScript experience, and the bundled Node server now persists data to a JSON file so records stay synced
+across browsers without requiring any third-party npm packages.
+This project contains a responsive, client-side web application for Azmat's rental fleet operations. It lets the team capture fleet, driver, trip, invoice, and supplier payment information while keeping a live overview of billing and payables status.
 This project contains a responsive web application for Azmat's rental fleet operations. It lets the team capture fleet, driver, trip, invoice, and supplier payment information while keeping a live overview of billing and payables status. The UI is still a lightweight vanilla-JavaScript experience, but it now persists data in a SQLite database through an Express API so the records are available from any device.
 
 ## Features
 
 - **Unified dashboards** for fleet inventory, driver roster, trip log, customer invoicing, and supplier payments.
 - **Mobile-first layout** with card shortcuts, touch-friendly tables, and responsive modals.
+- **File-backed persistence** through a minimalist Node API layer that stores application state on disk for cross-device access.
+- **Secure sign-in** gate that requires an administrator username/password before any fleet data is visible or synchronized.
+- **Excel export** powered by [SheetJS](https://sheetjs.com/) to download all registers as a multi-sheet workbook.
+- **Invoice PDF generation** using [jsPDF](https://github.com/parallax/jsPDF) so customer invoices can be printed or emailed.
+- **Finance reports** summarizing invoice collections and supplier payable status at a glance.
+- **One-click dark theme** toggle for the business dashboard so night-time operations stay comfortable on the eyes.
+
+## Architecture Overview
+
+- **Frontend:** `index.html` plus `assets/` static files served by the Node server. State is fetched from `/api/state` and synced
+  back after every change.
+- **Backend:** `server/index.js` runs a dependency-free HTTP server with in-memory session authentication, optional CORS, and JSON
+  parsing. It exposes `/api/login`, `/api/logout`, `/api/session`, `/api/state`, and `/api/health` endpoints.
+- **Persistence:** `server/storage.js` writes the serialized application state to `data/azmat-state.json` (configurable through
+  `DATABASE_PATH`). The file is created automatically on first run.
+- **Data persistence in the browser** using `localStorage` so entries remain between sessions on the same device.
 - **Database-backed persistence** through a Node/Express API layer with SQLite storage so records survive browser refreshes and device changes.
 - **Excel export** powered by [SheetJS](https://sheetjs.com/) to download all registers as a multi-sheet workbook.
 - **Invoice PDF generation** using [jsPDF](https://github.com/parallax/jsPDF) so customer invoices can be printed or emailed.
 - **Finance reports** summarizing invoice collections and supplier payable status at a glance.
 
+## Getting Started
+
+1. Open `index.html` in a modern browser (Chrome, Edge, Firefox, or Safari).
+2. Use the cards at the top of the page to add new fleet units, drivers, trips, customer invoices, or supplier payments.
+3. Filter fleet, invoice, and supplier tables using the dropdown filters.
+4. Click **Export All Data** to download the complete dataset as an Excel workbook.
+5. Use the **Print PDF** button in the invoice table to generate a customer-ready PDF.
+
+> ⚠️ All records are stored in the browser's `localStorage`. Clearing the browser storage or using a different browser/device will reset the data.
+
+## Development Notes
+
+The application is built as a static site with vanilla JavaScript and relies on CDN-hosted libraries for Excel and PDF capabilities. No additional build tooling is required.
 ## Architecture Overview
 
 - **Frontend:** `index.html` plus `assets/` static files served by the Express app. State is fetched from `/api/state` and synced back after every change.
@@ -20,6 +54,33 @@ This project contains a responsive web application for Azmat's rental fleet oper
 ## Local Development
 
 1. Install [Node.js 18+](https://nodejs.org/) on your machine.
+2. Copy the environment template if you want to override defaults:
+   ```bash
+   cp .env.example .env
+   ```
+3. Start the server (no `npm install` required):
+   ```bash
+   npm start
+   ```
+4. Open [http://localhost:3000](http://localhost:3000) in a modern browser (Chrome, Edge, Firefox, Safari).
+
+The Node server serves the static frontend and handles API requests in the same origin, so you can use the application
+immediately. Any records you enter will be written to `data/azmat-state.json` (or your configured path).
+
+By default the development server starts with `admin` / `admin` credentials. Update `AZMAT_AUTH_USERNAME` and
+`AZMAT_AUTH_PASSWORD` in a `.env` file to pick your own secrets.
+
+## Troubleshooting Persistence
+
+- **Seeing an "Unable to reach the Azmat data server" banner?** The UI falls back to browser storage when the API is unreachable.
+  Make sure the Node server is running locally (`npm start`) or that your deployed API endpoint is online.
+- **Need to log back in?** The app locks itself when the authentication token expires. Refresh the page to re-enter your
+  credentials and continue syncing data.
+- **Hosting the frontend separately?** Configure `window.__AZMAT_API_BASE__ = 'https://api.yourdomain.com'` (or set
+  `data-api-base` on the `<html>` tag) so the app knows where to send `/api` requests, and add that domain to the backend
+  `ALLOWED_ORIGINS`.
+- **Serving files directly from disk or another static server?** Without the API, each browser maintains isolated data in
+  localStorage. Run the provided Node server so records persist in the shared JSON data file.
 2. Install dependencies:
    ```bash
    npm install
@@ -39,6 +100,32 @@ The Express server serves the static frontend and handles API requests in the sa
 ## Deployment & Custom Domains
 
 1. **Build an environment:** Provision a Node 18+ runtime on your preferred host (Render, Railway, Fly.io, Azure Web Apps, etc.).
+2. **Upload the repo:** Push this repository to a Git provider and connect it to the hosting service. Configure the start command
+   to `npm start`.
+3. **Configure environment variables:**
+   - `PORT` – optional port override supplied by your host.
+   - `DATABASE_PATH` – optional absolute/relative path if you want the JSON state file in a different location or mounted volume.
+   - `ALLOWED_ORIGINS` – comma separated list of domains allowed to call the API if you serve the frontend separately.
+   - `AZMAT_AUTH_USERNAME` & `AZMAT_AUTH_PASSWORD` – credentials required to unlock the dashboard.
+   - `SESSION_TTL_MS` – optional session lifetime override (default is 12 hours).
+4. **Point your custom domain:** Create an A/AAAA or CNAME record from your registrar to the hosting provider's endpoint. Complete
+   any SSL configuration your provider requires.
+5. **(Optional) Separate frontend hosting:** If you host the static files elsewhere, set
+   `window.__AZMAT_API_BASE__ = 'https://api.yourdomain.com';` before loading `assets/js/app.js` (or add
+   `data-api-base="https://api.yourdomain.com"` to the `<html>` tag), and allow the frontend domain through `ALLOWED_ORIGINS`.
+
+Once deployed, opening your custom domain will serve the Azmat dashboard backed by the live JSON state file on the server. Backups
+can be created by copying the state file on the host.
+
+## Operations Notes
+
+- The `/api/health` endpoint returns `{ status: 'ok', auth: 'enabled' }` for uptime monitoring.
+- Call `/api/login` to exchange administrator credentials for a bearer token, `/api/session` to validate an existing token, and
+  `/api/logout` to revoke it ahead of expiry.
+- Since the server uses only Node built-ins, no package installation is required. You can redeploy quickly or run it in
+  restricted environments where npm registry access is unavailable.
+- All entities are stored within the single serialized state record. You can reset the app by deleting the JSON file defined by
+  `DATABASE_PATH`.
 2. **Upload the repo:** Push this repository to a Git provider and connect it to the hosting service. Configure the start command to `npm run start`.
 3. **Configure environment variables:**
    - `PORT` – optional port override supplied by your host.
