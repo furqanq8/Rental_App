@@ -864,6 +864,9 @@ function hideAuthOverlay() {
   if (dom.auth.error) {
     dom.auth.error.textContent = '';
   }
+  if (bodyElement) {
+    bodyElement.classList.remove('app-locked');
+  }
 }
 
 function handleUnauthorized(message) {
