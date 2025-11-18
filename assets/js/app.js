@@ -27,6 +27,7 @@ if (!authToken && bodyElement) {
   bodyElement.classList.add('app-locked');
 }
 
+const storageKey = 'azmat-fleet-state-v2';
 const apiBase = (window.__AZMAT_API_BASE__ || document.documentElement.getAttribute('data-api-base') || '').replace(/\/$/, '');
 const storageKey = 'azmat-fleet-state-v3';
 const defaultState = {
@@ -204,6 +205,15 @@ function findVehicleOwnership(vehicleId, fleetList = state.fleet) {
   return match ? match.ownership || '' : '';
 }
 
+function loadState() {
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return normalizeState(parsed);
+    }
+  } catch (error) {
+    console.warn('Unable to load saved data. Starting fresh.', error);
 function resolveApiPath(path) {
   if (!path.startsWith('/')) {
     return `${apiBase}/${path}`;
@@ -291,6 +301,9 @@ async function fetchRemoteState() {
     handleUnauthorized('Authentication required. Please sign in to continue.');
     throw new Error('Authentication required');
   }
+    headers: { Accept: 'application/json' },
+    credentials: 'include'
+  });
   if (!response.ok) {
     throw new Error(`Failed to fetch remote state (${response.status})`);
   }
@@ -330,6 +343,21 @@ async function pushRemoteState(snapshot) {
 
 function queueRemotePersist() {
   if (!stateHydratedFromServer || !authToken) {
+  const payload = snapshot || getSerializableState();
+  const response = await fetch(resolveApiPath('/api/state'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to persist remote state (${response.status})`);
+  }
+  return response.json();
+}
+
+function queueRemotePersist() {
+  if (!stateHydratedFromServer) {
     return;
   }
   if (persistQueue.timer) {
@@ -372,6 +400,11 @@ async function bootstrapState() {
       stateHydratedFromServer = false;
       return;
     }
+      remoteLoaded = true;
+    }
+  } catch (error) {
+    console.warn('Falling back to locally cached data because the server state could not be loaded.', error);
+  } finally {
     stateHydratedFromServer = true;
     if (!remoteLoaded) {
       queueRemotePersist();
@@ -472,6 +505,10 @@ function hydrateDerivedCollections(currentState) {
 
 function persistState() {
   try {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch (error) {
+    console.warn('Unable to persist data to localStorage.', error);
+  }
     saveLocalSnapshot(getSerializableState());
   } catch (error) {
     console.warn('Unable to persist data locally.', error);
@@ -921,6 +958,9 @@ async function bootstrapAfterAuth() {
   }
 }
 
+  }
+};
+
 function initializeModalDefaults() {
   document.querySelectorAll('.modal').forEach(modal => {
     const title = modal.querySelector('header h3');
@@ -986,6 +1026,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (dom.year) {
     dom.year.textContent = new Date().getFullYear();
   }
+document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  dom.year.textContent = new Date().getFullYear();
 
   initializeModalDefaults();
   setupModals();
@@ -996,6 +1039,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (dom.exportBtn) {
     dom.exportBtn.addEventListener('click', exportWorkbook);
   }
+  reconcileCompletedTripFinancials();
+  dom.exportBtn.addEventListener('click', exportWorkbook);
 
   renderAll();
   updateAllSelectOptions();
@@ -1007,6 +1052,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     showAuthOverlay('Sign in with your Azmat administrator account to manage fleet operations.');
     setSyncStatus('offline', 'Authentication required. Please sign in to sync data.');
   }
+  await bootstrapState();
+  reconcileCompletedTripFinancials();
+  renderAll();
+  updateAllSelectOptions();
 });
 
 function setupModals() {
