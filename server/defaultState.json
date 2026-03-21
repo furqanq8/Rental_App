@@ -1,0 +1,15 @@
+{
+  "fleet": [],
+  "drivers": [],
+  "trips": [],
+  "invoices": [],
+  "suppliers": [],
+  "supplierDirectory": [],
+  "customers": [],
+  "dashboardFilter": {
+    "mode": "thisMonth",
+    "start": "",
+    "end": ""
+  },
+  "nextTripNumber": 1
+}
