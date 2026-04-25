@@ -75,6 +75,7 @@ const editingContext = { type: null, index: -1 };
 const modalTypeMap = {
   fleetModal: 'fleet',
   driverModal: 'driver',
+  customerModal: 'customer',
   tripModal: 'trip',
   invoiceModal: 'invoice',
   supplierModal: 'supplierPayment',
@@ -83,6 +84,7 @@ const modalTypeMap = {
 const modalEditTitles = {
   fleetModal: 'Edit Fleet Unit',
   driverModal: 'Edit Driver',
+  customerModal: 'Edit Customer',
   tripModal: 'Edit Trip',
   invoiceModal: 'Edit Invoice',
   supplierModal: 'Edit Supplier Payment',
@@ -91,6 +93,7 @@ const modalEditTitles = {
 const modalEditSubmitLabels = {
   fleetModal: 'Update Unit',
   driverModal: 'Update Driver',
+  customerModal: 'Update Customer',
   tripModal: 'Update Trip',
   invoiceModal: 'Update Invoice',
   supplierModal: 'Update Payment',
@@ -836,6 +839,7 @@ const dom = {
   fleetTable: document.querySelector('#fleetTable tbody'),
   fleetFilter: document.getElementById('fleetFilter'),
   driverTable: document.querySelector('#driverTable tbody'),
+  customerTable: document.querySelector('#customerTable tbody'),
   tripTable: document.querySelector('#tripTable tbody'),
   invoiceTable: document.querySelector('#invoiceTable tbody'),
   invoiceFilter: document.getElementById('invoiceFilter'),
@@ -1467,6 +1471,7 @@ function formatTripId(sequenceNumber) {
 function setupForms() {
   const fleetForm = document.getElementById('fleetForm');
   const driverForm = document.getElementById('driverForm');
+  const customerForm = document.getElementById('customerForm');
   const tripForm = document.getElementById('tripForm');
   const invoiceForm = document.getElementById('invoiceForm');
   const supplierForm = document.getElementById('supplierForm');
@@ -1555,6 +1560,38 @@ function setupForms() {
       });
       toggleDependentSelect(selectRefs.driverSupplier, driverAffiliationSelect.value === 'supplier');
     }
+  }
+
+  if (customerForm) {
+    customerForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const formData = new FormData(customerForm);
+      const customerName = String(formData.get('name') || '').trim();
+      if (!customerName) {
+        window.alert('Customer name is required.');
+        return;
+      }
+      const duplicateIndex = state.customers.findIndex((name, index) => {
+        if (normalizeText(name) !== normalizeText(customerName)) return false;
+        if (isEditing('customer') && index === editingContext.index) return false;
+        return true;
+      });
+      if (duplicateIndex !== -1) {
+        window.alert('This customer already exists.');
+        return;
+      }
+      if (isEditing('customer')) {
+        state.customers.splice(editingContext.index, 1, customerName);
+      } else {
+        state.customers.unshift(customerName);
+      }
+      state.customers = Array.from(new Set(state.customers.map(name => String(name).trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b));
+      persistState();
+      renderCustomers();
+      updateAllSelectOptions();
+      closeModal('customerModal');
+    });
   }
 
   if (tripForm) {
@@ -1822,6 +1859,7 @@ function renderAll() {
   renderFleet();
   renderDrivers();
   renderSupplierDirectory();
+  renderCustomers();
   renderTrips();
   renderInvoices();
   renderSuppliers();
@@ -1880,6 +1918,30 @@ function renderDrivers() {
       const index = Number(button.dataset.index);
       if (!Number.isNaN(index)) {
         openDriverEditor(index);
+      }
+    });
+  });
+}
+
+function renderCustomers() {
+  if (!dom.customerTable) {
+    return;
+  }
+  dom.customerTable.innerHTML = state.customers
+    .map(name => {
+      const index = state.customers.indexOf(name);
+      return `<tr>
+        <td data-label="Customer Name">${escapeHtml(name)}</td>
+        <td data-label="Actions"><div class="table-actions"><button class="btn secondary" data-edit="customer" data-index="${index}">Edit</button></div></td>
+      </tr>`;
+    })
+    .join('');
+
+  dom.customerTable.querySelectorAll('[data-edit="customer"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      if (!Number.isNaN(index)) {
+        openCustomerEditor(index);
       }
     });
   });
@@ -2081,6 +2143,25 @@ function openDriverEditor(index) {
   setModalMode('driverModal', 'edit');
   populateDriverForm(index);
   openModal('driverModal');
+}
+
+function openCustomerEditor(index) {
+  const entry = state.customers[index];
+  if (!entry) {
+    return;
+  }
+  const modal = document.getElementById('customerModal');
+  const form = document.getElementById('customerForm');
+  if (!modal || !form) {
+    return;
+  }
+  startEditing('customer', index);
+  setModalMode('customerModal', 'edit');
+  const input = form.querySelector('input[name="name"]');
+  if (input) {
+    input.value = entry;
+  }
+  openModal('customerModal');
 }
 
 function openTripEditor(index) {
