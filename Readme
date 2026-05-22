@@ -13,6 +13,8 @@ This project contains a responsive web application for Azmat's rental fleet oper
 - **Mobile-first layout** with card shortcuts, touch-friendly tables, and responsive modals.
 - **File-backed persistence** through a minimalist Node API layer that stores application state on disk for cross-device access.
 - **Secure sign-in** gate that requires an administrator username/password before any fleet data is visible or synchronized.
+- **Offline-safe editing** that still unlocks the UI with your admin credentials when the API is unreachable, keeping changes in
+  browser storage until the server returns.
 - **Excel export** powered by [SheetJS](https://sheetjs.com/) to download all registers as a multi-sheet workbook.
 - **Invoice PDF generation** using [jsPDF](https://github.com/parallax/jsPDF) so customer invoices can be printed or emailed.
 - **Finance reports** summarizing invoice collections and supplier payable status at a glance.
@@ -81,6 +83,9 @@ By default the development server starts with `admin` / `admin` credentials. Upd
   `ALLOWED_ORIGINS`.
 - **Serving files directly from disk or another static server?** Without the API, each browser maintains isolated data in
   localStorage. Run the provided Node server so records persist in the shared JSON data file.
+- **Need to work completely offline?** Use the same admin username/password (defaults to `admin` / `admin`). The dashboard will
+  unlock in "offline" mode, store data only in the current browser, and automatically resume syncing once the backend becomes
+  reachable again.
 2. Install dependencies:
    ```bash
    npm install

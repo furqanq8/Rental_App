@@ -1,5 +1,14 @@
 const authStorageKey = 'azmat-auth-token';
 const themeStorageKey = 'azmat-theme-preference';
+const offlineSessionStorageKey = 'azmat-offline-session';
+const offlineCredsStorageKey = 'azmat-offline-creds';
+const offlineTokenValue = 'offline::local::session';
+const defaultOfflineCredentials = { username: 'admin', password: 'admin' };
+const offlineSyncMessage = 'Working offline with local data. Changes stay on this device until you connect to the Azmat server.';
+let authToken = '';
+let authUser = null;
+let offlineSession = false;
+let cachedOfflineCredentials = null;
 let authToken = '';
 let authUser = null;
 
@@ -12,6 +21,15 @@ try {
   }
 } catch (error) {
   console.warn('Unable to restore authentication token from storage.', error);
+}
+
+try {
+  offlineSession = localStorage.getItem(offlineSessionStorageKey) === '1';
+  if (offlineSession && (!authToken || authToken === '')) {
+    authToken = offlineTokenValue;
+  }
+} catch (error) {
+  console.warn('Unable to restore offline session state.', error);
 }
 
 try {
@@ -60,6 +78,7 @@ const editingContext = { type: null, index: -1 };
 const modalTypeMap = {
   fleetModal: 'fleet',
   driverModal: 'driver',
+  customerModal: 'customer',
   tripModal: 'trip',
   invoiceModal: 'invoice',
   supplierModal: 'supplierPayment',
@@ -68,6 +87,7 @@ const modalTypeMap = {
 const modalEditTitles = {
   fleetModal: 'Edit Fleet Unit',
   driverModal: 'Edit Driver',
+  customerModal: 'Edit Customer',
   tripModal: 'Edit Trip',
   invoiceModal: 'Edit Invoice',
   supplierModal: 'Edit Supplier Payment',
@@ -76,6 +96,7 @@ const modalEditTitles = {
 const modalEditSubmitLabels = {
   fleetModal: 'Update Unit',
   driverModal: 'Update Driver',
+  customerModal: 'Update Customer',
   tripModal: 'Update Trip',
   invoiceModal: 'Update Invoice',
   supplierModal: 'Update Payment',
@@ -151,6 +172,10 @@ function setSyncStatus(status, error) {
   }
 }
 
+function setAuthToken(token, user, options = {}) {
+  const offline = Boolean(options.offline);
+  authToken = token || '';
+  offlineSession = offline;
 function setAuthToken(token, user) {
   authToken = token || '';
   if (user && typeof user === 'object') {
@@ -162,6 +187,11 @@ function setAuthToken(token, user) {
     } else {
       localStorage.removeItem(authStorageKey);
     }
+    if (offlineSession) {
+      localStorage.setItem(offlineSessionStorageKey, '1');
+    } else {
+      localStorage.removeItem(offlineSessionStorageKey);
+    }
   } catch (error) {
     console.warn('Unable to persist authentication token.', error);
   }
@@ -172,6 +202,7 @@ function setAuthToken(token, user) {
       bodyElement.classList.add('app-locked');
     }
   }
+  if (!authToken || offlineSession) {
   if (!authToken) {
     stateHydratedFromServer = false;
   }
@@ -182,6 +213,90 @@ function getAuthHeaders() {
     return {};
   }
   return { Authorization: `Bearer ${authToken}` };
+}
+
+function encodeOfflineSecret(username, password) {
+  const raw = `${username}:::${password}`;
+  try {
+    return btoa(unescape(encodeURIComponent(raw)));
+  } catch (error) {
+    try {
+      return btoa(raw);
+    } catch (fallbackError) {
+      console.warn('Unable to encode offline credential.', fallbackError);
+      return raw;
+    }
+  }
+}
+
+function loadOfflineCredentials() {
+  if (cachedOfflineCredentials) {
+    return cachedOfflineCredentials;
+  }
+  try {
+    const raw = localStorage.getItem(offlineCredsStorageKey);
+    if (!raw) {
+      return null;
+    }
+    cachedOfflineCredentials = JSON.parse(raw);
+    return cachedOfflineCredentials;
+  } catch (error) {
+    console.warn('Unable to load offline credentials.', error);
+    return null;
+  }
+}
+
+function rememberOfflineCredentials(username, password) {
+  if (!username || !password) {
+    return;
+  }
+  const payload = { username, secret: encodeOfflineSecret(username, password) };
+  cachedOfflineCredentials = payload;
+  try {
+    localStorage.setItem(offlineCredsStorageKey, JSON.stringify(payload));
+  } catch (error) {
+    console.warn('Unable to store offline credentials.', error);
+  }
+}
+
+function credentialsMatchOffline(username, password) {
+  if (!username || !password) {
+    return false;
+  }
+  const stored = loadOfflineCredentials();
+  const secret = encodeOfflineSecret(username, password);
+  if (stored && stored.username === username && stored.secret === secret) {
+    return true;
+  }
+  return username === defaultOfflineCredentials.username && password === defaultOfflineCredentials.password;
+}
+
+function isNetworkError(error) {
+  if (!error) {
+    return false;
+  }
+  if (error.name === 'TypeError') {
+    return true;
+  }
+  const message = error.message || '';
+  return /network|fetch|offline|connection|reach|timeout|sign in right now/i.test(message);
+}
+
+function startOfflineSession(username) {
+  const displayName = username || 'Offline User';
+  setAuthToken(offlineTokenValue, { username: displayName }, { offline: true });
+  setSyncStatus('offline', offlineSyncMessage);
+}
+
+function maybeUnlockOfflineSession(username, password, error) {
+  if (!isNetworkError(error)) {
+    return false;
+  }
+  if (!credentialsMatchOffline(username, password)) {
+    return false;
+  }
+  startOfflineSession(username);
+  return true;
 }
 
 function normalizeText(value) {
@@ -342,6 +457,7 @@ async function pushRemoteState(snapshot) {
 }
 
 function queueRemotePersist() {
+  if (!stateHydratedFromServer || !authToken || offlineSession) {
   if (!stateHydratedFromServer || !authToken) {
   const payload = snapshot || getSerializableState();
   const response = await fetch(resolveApiPath('/api/state'), {
@@ -365,6 +481,7 @@ function queueRemotePersist() {
   }
   persistQueue.timer = setTimeout(() => {
     persistQueue.timer = null;
+    if (!authToken || offlineSession) {
     if (!authToken) {
       return;
     }
@@ -379,6 +496,8 @@ async function bootstrapState() {
   if (localSnapshot) {
     applyStateSnapshot(localSnapshot);
   }
+  if (!authToken || offlineSession) {
+    stateHydratedFromServer = false;
   if (!authToken) {
     return;
   }
@@ -396,6 +515,10 @@ async function bootstrapState() {
     console.warn('Falling back to locally cached data because the server state could not be loaded.', error);
     setSyncStatus('offline', error);
   } finally {
+    if (!authToken || offlineSession) {
+      stateHydratedFromServer = false;
+      return;
+    }
     if (!authToken) {
       stateHydratedFromServer = false;
       return;
@@ -765,6 +888,7 @@ const dom = {
   fleetTable: document.querySelector('#fleetTable tbody'),
   fleetFilter: document.getElementById('fleetFilter'),
   driverTable: document.querySelector('#driverTable tbody'),
+  customerTable: document.querySelector('#customerTable tbody'),
   tripTable: document.querySelector('#tripTable tbody'),
   invoiceTable: document.querySelector('#invoiceTable tbody'),
   invoiceFilter: document.getElementById('invoiceFilter'),
@@ -918,6 +1042,11 @@ function initializeAuthUi() {
     if (dom.auth.error) {
       dom.auth.error.textContent = '';
     }
+    let unlockedOffline = false;
+    try {
+      const result = await attemptLogin(username, password);
+      setAuthToken(result.token, result.user || { username });
+      rememberOfflineCredentials(username, password);
     try {
       const result = await attemptLogin(username, password);
       setAuthToken(result.token, result.user || { username });
@@ -927,6 +1056,19 @@ function initializeAuthUi() {
       }
       await bootstrapAfterAuth();
     } catch (error) {
+      if (maybeUnlockOfflineSession(username, password, error)) {
+        unlockedOffline = true;
+        if (dom.auth.form) {
+          dom.auth.form.reset();
+        }
+        hideAuthOverlay();
+        await bootstrapAfterAuth();
+      } else {
+        const message = error && error.message ? error.message : 'Unable to sign in. Please try again.';
+        showAuthOverlay(message);
+        if (dom.auth.error) {
+          dom.auth.error.textContent = message;
+        }
       const message = error && error.message ? error.message : 'Unable to sign in. Please try again.';
       showAuthOverlay(message);
       if (dom.auth.error) {
@@ -936,6 +1078,9 @@ function initializeAuthUi() {
       if (dom.auth.submit) {
         dom.auth.submit.disabled = false;
         dom.auth.submit.textContent = authSubmitDefaultLabel;
+      }
+      if (unlockedOffline && dom.auth.error) {
+        dom.auth.error.textContent = '';
       }
     }
   });
@@ -1046,6 +1191,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateAllSelectOptions();
 
   if (authToken) {
+    if (offlineSession) {
+      setSyncStatus('offline', offlineSyncMessage);
+    }
     hideAuthOverlay();
     await bootstrapAfterAuth();
   } else {
@@ -1391,6 +1539,7 @@ function formatTripId(sequenceNumber) {
 function setupForms() {
   const fleetForm = document.getElementById('fleetForm');
   const driverForm = document.getElementById('driverForm');
+  const customerForm = document.getElementById('customerForm');
   const tripForm = document.getElementById('tripForm');
   const invoiceForm = document.getElementById('invoiceForm');
   const supplierForm = document.getElementById('supplierForm');
@@ -1479,6 +1628,38 @@ function setupForms() {
       });
       toggleDependentSelect(selectRefs.driverSupplier, driverAffiliationSelect.value === 'supplier');
     }
+  }
+
+  if (customerForm) {
+    customerForm.addEventListener('submit', event => {
+      event.preventDefault();
+      const formData = new FormData(customerForm);
+      const customerName = String(formData.get('name') || '').trim();
+      if (!customerName) {
+        window.alert('Customer name is required.');
+        return;
+      }
+      const duplicateIndex = state.customers.findIndex((name, index) => {
+        if (normalizeText(name) !== normalizeText(customerName)) return false;
+        if (isEditing('customer') && index === editingContext.index) return false;
+        return true;
+      });
+      if (duplicateIndex !== -1) {
+        window.alert('This customer already exists.');
+        return;
+      }
+      if (isEditing('customer')) {
+        state.customers.splice(editingContext.index, 1, customerName);
+      } else {
+        state.customers.unshift(customerName);
+      }
+      state.customers = Array.from(new Set(state.customers.map(name => String(name).trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b));
+      persistState();
+      renderCustomers();
+      updateAllSelectOptions();
+      closeModal('customerModal');
+    });
   }
 
   if (tripForm) {
@@ -1746,6 +1927,7 @@ function renderAll() {
   renderFleet();
   renderDrivers();
   renderSupplierDirectory();
+  renderCustomers();
   renderTrips();
   renderInvoices();
   renderSuppliers();
@@ -1804,6 +1986,30 @@ function renderDrivers() {
       const index = Number(button.dataset.index);
       if (!Number.isNaN(index)) {
         openDriverEditor(index);
+      }
+    });
+  });
+}
+
+function renderCustomers() {
+  if (!dom.customerTable) {
+    return;
+  }
+  dom.customerTable.innerHTML = state.customers
+    .map(name => {
+      const index = state.customers.indexOf(name);
+      return `<tr>
+        <td data-label="Customer Name">${escapeHtml(name)}</td>
+        <td data-label="Actions"><div class="table-actions"><button class="btn secondary" data-edit="customer" data-index="${index}">Edit</button></div></td>
+      </tr>`;
+    })
+    .join('');
+
+  dom.customerTable.querySelectorAll('[data-edit="customer"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const index = Number(button.dataset.index);
+      if (!Number.isNaN(index)) {
+        openCustomerEditor(index);
       }
     });
   });
@@ -2005,6 +2211,25 @@ function openDriverEditor(index) {
   setModalMode('driverModal', 'edit');
   populateDriverForm(index);
   openModal('driverModal');
+}
+
+function openCustomerEditor(index) {
+  const entry = state.customers[index];
+  if (!entry) {
+    return;
+  }
+  const modal = document.getElementById('customerModal');
+  const form = document.getElementById('customerForm');
+  if (!modal || !form) {
+    return;
+  }
+  startEditing('customer', index);
+  setModalMode('customerModal', 'edit');
+  const input = form.querySelector('input[name="name"]');
+  if (input) {
+    input.value = entry;
+  }
+  openModal('customerModal');
 }
 
 function openTripEditor(index) {
