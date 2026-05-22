@@ -9,6 +9,8 @@ let authToken = '';
 let authUser = null;
 let offlineSession = false;
 let cachedOfflineCredentials = null;
+let authToken = '';
+let authUser = null;
 
 const bodyElement = document.body;
 
@@ -43,6 +45,7 @@ if (!authToken && bodyElement) {
   bodyElement.classList.add('app-locked');
 }
 
+const storageKey = 'azmat-fleet-state-v2';
 const apiBase = (window.__AZMAT_API_BASE__ || document.documentElement.getAttribute('data-api-base') || '').replace(/\/$/, '');
 const storageKey = 'azmat-fleet-state-v3';
 const defaultState = {
@@ -173,6 +176,8 @@ function setAuthToken(token, user, options = {}) {
   const offline = Boolean(options.offline);
   authToken = token || '';
   offlineSession = offline;
+function setAuthToken(token, user) {
+  authToken = token || '';
   if (user && typeof user === 'object') {
     authUser = { ...user };
   }
@@ -198,6 +203,7 @@ function setAuthToken(token, user, options = {}) {
     }
   }
   if (!authToken || offlineSession) {
+  if (!authToken) {
     stateHydratedFromServer = false;
   }
 }
@@ -314,6 +320,15 @@ function findVehicleOwnership(vehicleId, fleetList = state.fleet) {
   return match ? match.ownership || '' : '';
 }
 
+function loadState() {
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return normalizeState(parsed);
+    }
+  } catch (error) {
+    console.warn('Unable to load saved data. Starting fresh.', error);
 function resolveApiPath(path) {
   if (!path.startsWith('/')) {
     return `${apiBase}/${path}`;
@@ -401,6 +416,9 @@ async function fetchRemoteState() {
     handleUnauthorized('Authentication required. Please sign in to continue.');
     throw new Error('Authentication required');
   }
+    headers: { Accept: 'application/json' },
+    credentials: 'include'
+  });
   if (!response.ok) {
     throw new Error(`Failed to fetch remote state (${response.status})`);
   }
@@ -440,6 +458,22 @@ async function pushRemoteState(snapshot) {
 
 function queueRemotePersist() {
   if (!stateHydratedFromServer || !authToken || offlineSession) {
+  if (!stateHydratedFromServer || !authToken) {
+  const payload = snapshot || getSerializableState();
+  const response = await fetch(resolveApiPath('/api/state'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to persist remote state (${response.status})`);
+  }
+  return response.json();
+}
+
+function queueRemotePersist() {
+  if (!stateHydratedFromServer) {
     return;
   }
   if (persistQueue.timer) {
@@ -448,6 +482,7 @@ function queueRemotePersist() {
   persistQueue.timer = setTimeout(() => {
     persistQueue.timer = null;
     if (!authToken || offlineSession) {
+    if (!authToken) {
       return;
     }
     pushRemoteState().catch(error => {
@@ -463,6 +498,7 @@ async function bootstrapState() {
   }
   if (!authToken || offlineSession) {
     stateHydratedFromServer = false;
+  if (!authToken) {
     return;
   }
   setSyncStatus('connecting');
@@ -483,6 +519,15 @@ async function bootstrapState() {
       stateHydratedFromServer = false;
       return;
     }
+    if (!authToken) {
+      stateHydratedFromServer = false;
+      return;
+    }
+      remoteLoaded = true;
+    }
+  } catch (error) {
+    console.warn('Falling back to locally cached data because the server state could not be loaded.', error);
+  } finally {
     stateHydratedFromServer = true;
     if (!remoteLoaded) {
       queueRemotePersist();
@@ -583,6 +628,10 @@ function hydrateDerivedCollections(currentState) {
 
 function persistState() {
   try {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch (error) {
+    console.warn('Unable to persist data to localStorage.', error);
+  }
     saveLocalSnapshot(getSerializableState());
   } catch (error) {
     console.warn('Unable to persist data locally.', error);
@@ -998,6 +1047,9 @@ function initializeAuthUi() {
       const result = await attemptLogin(username, password);
       setAuthToken(result.token, result.user || { username });
       rememberOfflineCredentials(username, password);
+    try {
+      const result = await attemptLogin(username, password);
+      setAuthToken(result.token, result.user || { username });
       hideAuthOverlay();
       if (dom.auth.form) {
         dom.auth.form.reset();
@@ -1017,6 +1069,10 @@ function initializeAuthUi() {
         if (dom.auth.error) {
           dom.auth.error.textContent = message;
         }
+      const message = error && error.message ? error.message : 'Unable to sign in. Please try again.';
+      showAuthOverlay(message);
+      if (dom.auth.error) {
+        dom.auth.error.textContent = message;
       }
     } finally {
       if (dom.auth.submit) {
@@ -1046,6 +1102,9 @@ async function bootstrapAfterAuth() {
     bootstrapPromise = null;
   }
 }
+
+  }
+};
 
 function initializeModalDefaults() {
   document.querySelectorAll('.modal').forEach(modal => {
@@ -1112,6 +1171,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (dom.year) {
     dom.year.textContent = new Date().getFullYear();
   }
+document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  dom.year.textContent = new Date().getFullYear();
 
   initializeModalDefaults();
   setupModals();
@@ -1122,6 +1184,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (dom.exportBtn) {
     dom.exportBtn.addEventListener('click', exportWorkbook);
   }
+  reconcileCompletedTripFinancials();
+  dom.exportBtn.addEventListener('click', exportWorkbook);
 
   renderAll();
   updateAllSelectOptions();
@@ -1136,6 +1200,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     showAuthOverlay('Sign in with your Azmat administrator account to manage fleet operations.');
     setSyncStatus('offline', 'Authentication required. Please sign in to sync data.');
   }
+  await bootstrapState();
+  reconcileCompletedTripFinancials();
+  renderAll();
+  updateAllSelectOptions();
 });
 
 function setupModals() {
